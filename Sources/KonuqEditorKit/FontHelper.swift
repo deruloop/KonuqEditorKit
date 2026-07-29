@@ -350,7 +350,7 @@ extension Font {
 }
 
 extension UIFont {
-	static func appSpaceGrotesk(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+	static func konuqSpaceGrotesk(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
 		KonuqEditorFonts.registerIfNeeded()
 		if isIOsAppOnMacRuntime() {
 			return UIFont.systemFont(ofSize: size, weight: weight)
@@ -363,7 +363,7 @@ extension UIFont {
 		)
 	}
 
-	static func appDMSans(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+	static func konuqDMSans(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
 		KonuqEditorFonts.registerIfNeeded()
 		if isIOsAppOnMacRuntime() {
 			return UIFont.systemFont(ofSize: size, weight: weight)

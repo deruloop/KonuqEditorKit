@@ -23,7 +23,7 @@ final class SelectionActionBarView: UIView {
         titleLabel.font = UIFont.preferredFont(forTextStyle: .subheadline)
         titleLabel.textColor = .secondaryLabel
         
-        deleteButton.setTitle(String(localized: "note.editor.overlay.delete"), for: .normal)
+        deleteButton.setTitle("Delete", for: .normal)
         deleteButton.setTitleColor(.systemRed, for: .normal)
         deleteButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
         deleteButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
@@ -54,9 +54,9 @@ final class SelectionActionBarView: UIView {
 
     func update(selectedCount: Int) {
         if selectedCount == 1 {
-            titleLabel.text = String(localized: "note.editor.overlay.selected.one")
+            titleLabel.text = "1 selected"
         } else {
-            let format = String(localized: "note.editor.overlay.selected.many")
+            let format = "%d selected"
             titleLabel.text = String(format: format, selectedCount)
         }
         deleteButton.isEnabled = selectedCount > 0

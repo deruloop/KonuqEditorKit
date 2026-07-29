@@ -288,7 +288,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		tap.cancelsTouchesInView = false
 		textView.addGestureRecognizer(tap)
 
-        placeholderLabel.text = String(localized: "note.editor.placeholder.start_typing")
+        placeholderLabel.text = "Start typing…"
         placeholderLabel.textColor = .placeholderText
         placeholderLabel.numberOfLines = 1
         placeholderLabel.adjustsFontForContentSizeCategory = true
@@ -1514,8 +1514,10 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 	}
 
 	private static func tagColor(for tag: String) -> UIColor {
-		let idx = tagColorIndex(for: tag)
-		return UIColor(named: "tag\(idx)Color", in: .module, compatibleWith: nil) ?? UIColor.secondarySystemBackground
+		let colors = KonuqEditor.theme.tagColors
+		guard !colors.isEmpty else { return UIColor.secondarySystemBackground }
+		let idx = (tagColorIndex(for: tag) - 1) % colors.count
+		return colors[idx]
 	}
 
 	private static func tagTextColor(for backgroundColor: UIColor) -> UIColor {
@@ -1524,18 +1526,18 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		var b: CGFloat = 0
 		var a: CGFloat = 0
 		guard backgroundColor.getRed(&r, green: &g, blue: &b, alpha: &a) else {
-			return UIColor(named: "secondaryTextColor", in: .module, compatibleWith: nil) ?? UIColor.secondaryLabel
+			return KonuqEditor.theme.secondaryText
 		}
 
 		let luminance = (0.2126 * r) + (0.7152 * g) + (0.0722 * b)
 		if luminance < 0.42 {
 			return UIColor.white.withAlphaComponent(0.90)
 		}
-		return backgroundColor.darker(by: 55) ?? (UIColor(named: "secondaryTextColor", in: .module, compatibleWith: nil) ?? UIColor.secondaryLabel)
+		return backgroundColor.darker(by: 55) ?? KonuqEditor.theme.secondaryText
 	}
 
 	private func baseTextColor() -> UIColor {
-		UIColor(named: "primaryTextColor", in: .module, compatibleWith: nil) ?? UIColor.label
+		KonuqEditor.theme.primaryText
 	}
 
 	private func applyBaseTextAttributesIfNeeded() {
@@ -1776,7 +1778,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 			linkToNoteButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 		}
 
-		doneButton.setTitle(String(localized: "note.editor.keyboard.done"), for: .normal)
+		doneButton.setTitle("Done", for: .normal)
 		doneButton.titleLabel?.font = UIFont.preferredFont(forTextStyle: .headline)
 		doneButton.titleLabel?.adjustsFontForContentSizeCategory = true
 		doneButton.setTitleColor(.appAccent, for: .normal)

@@ -133,10 +133,11 @@ public struct BlocksEditorSwiftUIShellView: View {
 			onLinkToNote: onLinkToNote,
 			onOpenURL: onOpenURL
 		)
+		.tint(Color(uiColor: KonuqEditor.theme.accent))
 		.toolbar {
 			if model.isSelectionMode {
 				ToolbarItem(placement: .topBarTrailing) {
-					Button("note.editor.selection.done") {
+					Button("Done") {
 						model.done()
 					}
 				}
@@ -206,7 +207,7 @@ private struct SelectionActionBar: View {
 			Button {
 				onSelectAll()
 			} label: {
-				Label("note.editor.selection.selectAll", systemImage: "checkmark.circle")
+				Label("Select All", systemImage: "checkmark.circle")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
 			}
@@ -216,7 +217,7 @@ private struct SelectionActionBar: View {
 			Button {
 				onCopy()
 			} label: {
-				Label("note.editor.selection.copy", systemImage: "doc.on.doc")
+				Label("Copy", systemImage: "doc.on.doc")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
 			}
@@ -226,7 +227,7 @@ private struct SelectionActionBar: View {
 			Button {
 				onCut()
 			} label: {
-				Label("note.editor.selection.cut", systemImage: "scissors")
+				Label("Cut", systemImage: "scissors")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
 			}
@@ -236,7 +237,7 @@ private struct SelectionActionBar: View {
 			Button {
 				onSend()
 			} label: {
-				Label("note.editor.selection.send", systemImage: "arrowshape.turn.up.right")
+				Label("Send", systemImage: "arrowshape.turn.up.right")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
 			}
@@ -246,7 +247,7 @@ private struct SelectionActionBar: View {
 			Button {
 				onDelete()
 			} label: {
-				Label("note.editor.selection.delete", systemImage: "trash")
+				Label("Delete", systemImage: "trash")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
 			}

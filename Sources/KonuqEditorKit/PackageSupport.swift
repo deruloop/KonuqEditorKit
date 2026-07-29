@@ -12,8 +12,7 @@ var isiOSAppOnMac: Bool {
 extension UIColor {
 	/// Accent color, resolved from the package's bundled asset catalog.
 	static var appAccent: UIColor {
-		UIColor(named: "appAccentColor", in: .module, compatibleWith: nil)
-			?? UIColor(displayP3Red: 0.403, green: 0.527, blue: 0.455, alpha: 1)
+		KonuqEditor.theme.accent
 	}
 
 	/// Resolve an editor palette color from the package bundle, with a fallback.
