@@ -31,7 +31,7 @@ public final class BlocksEditorShellModel: ObservableObject {
 
     public init() {}
 
-    func done() {
+    public func done() {
         controller?.setSelectionMode(false)
     }
 
@@ -51,23 +51,23 @@ public final class BlocksEditorShellModel: ObservableObject {
 		controller?.selectAllBlocks()
 	}
 
-	func focusLastTextBlock() {
+	public func focusLastTextBlock() {
 		controller?.focusLastTextBlock()
 	}
 
-	func insertText(_ text: String) {
+	public func insertText(_ text: String) {
 		controller?.insertText(text)
 	}
 
-	func insertNewBlockAtCursor() {
+	public func insertNewBlockAtCursor() {
 		controller?.insertNewBlockAtCursor()
 	}
 
-	func replaceDictationText(_ text: String) {
+	public func replaceDictationText(_ text: String) {
 		controller?.replaceDictationText(text)
 	}
 
-	func endDictation() {
+	public func endDictation() {
 		controller?.endDictation()
 	}
 
