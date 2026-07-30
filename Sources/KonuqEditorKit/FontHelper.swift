@@ -16,7 +16,7 @@ private func isIOsAppOnMacRuntime() -> Bool {
 	return false
 }
 
-public enum AppFontFamily {
+enum AppFontFamily {
 	case system
 	case spaceGrotesk
 	case dmSans
@@ -132,47 +132,47 @@ extension Font {
 	}
 	
 	/// Styles
-	public static var title: Font {
+	static var title: Font {
 		return Font.custom(regularFontName, size: preferredTitle1)
 	}
 	
-	public static var title2: Font {
+	static var title2: Font {
 		return Font.custom(regularFontName, size: preferredTitle2)
 	}
 	
-	public static var title3: Font {
+	static var title3: Font {
 		return Font.custom(regularFontName, size: preferredTitle3)
 	}
 
-	public static var largeTitle: Font {
+	static var largeTitle: Font {
 		return Font.custom(regularFontName, size: preferredLargeTitle)
 	}
 	
-	public static var body: Font {
+	static var body: Font {
 		return Font.custom(regularFontName, size: preferredBody)
 	}
 	
-	public static var headline: Font {
+	static var headline: Font {
 		return Font.custom(regularFontName, size: preferredHeadline)
 	}
 		
-	public static var subheadline: Font {
+	static var subheadline: Font {
 		return Font.custom(regularFontName, size: preferredSubheadline)
 	}
 		
-	public static var callout: Font {
+	static var callout: Font {
 		return Font.custom(regularFontName, size: preferredCallout)
 	}
 	
-	public static var footnote: Font {
+	static var footnote: Font {
 		return Font.custom(regularFontName, size: preferredFootnote)
 	}
 	
-	public static var caption: Font {
+	static var caption: Font {
 		return Font.custom(regularFontName, size: preferredCaption)
 	}
 	
-	public static var caption2: Font {
+	static var caption2: Font {
 		return Font.custom(regularFontName, size: preferredCaption2)
 	}
 
@@ -224,7 +224,7 @@ extension Font {
 		}
 	}
 
-	public static func app(_ style: Font.TextStyle, family: AppFontFamily = .spaceGrotesk, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
+	static func app(_ style: Font.TextStyle, family: AppFontFamily = .spaceGrotesk, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
 		if isIOsAppOnMacRuntime() {
 			return Font.system(style, design: design).weight(weight)
 		}
@@ -242,7 +242,7 @@ extension Font {
 		}
 	}
 
-	public static func app(size: CGFloat, family: AppFontFamily = .spaceGrotesk, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
+	static func app(size: CGFloat, family: AppFontFamily = .spaceGrotesk, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
 		if isIOsAppOnMacRuntime() {
 			return Font.system(size: size, weight: weight, design: design)
 		}
@@ -258,7 +258,7 @@ extension Font {
 		}
 	}
 	
-	public static func appSystem(_ style: Font.TextStyle, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
+	static func appSystem(_ style: Font.TextStyle, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
 		var size: CGFloat
 		var font: String
 
@@ -319,7 +319,7 @@ extension Font {
 		return Font.custom(font, size: size)
 	}
 	
-	public static func appSystem(size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
+	static func appSystem(size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
 		var font: String
 		
 		switch weight {
