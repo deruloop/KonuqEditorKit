@@ -43,6 +43,8 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     var onBlocksChanged: (([EditorBlockSnapshot]) -> Void)?
 	var onLinkToNote: (() -> Void)?
 	var onOpenURL: ((URL) -> Void)?
+	var onTapStop: ((String) -> Void)?
+	var onTapDay: ((String) -> Void)?
 
     init(initialEmptyStyle: TextStyle = .text) {
         self.initialEmptyStyle = initialEmptyStyle
@@ -74,6 +76,8 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         tableView.rowHeight = UITableView.automaticDimension
         tableView.register(BlockCell.self, forCellReuseIdentifier: BlockCell.reuseId)
 		tableView.register(MediaBlockCell.self, forCellReuseIdentifier: MediaBlockCell.reuseId)
+		tableView.register(StopCardCell.self, forCellReuseIdentifier: StopCardCell.reuseId)
+		tableView.register(DayDividerCell.self, forCellReuseIdentifier: DayDividerCell.reuseId)
         tableView.allowsSelection = false
         tableView.allowsMultipleSelection = false
         tableView.dragInteractionEnabled = true
@@ -537,6 +541,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 					case .video:
 						return .video(reference: media.reference, displayStyle: media.displayStyle)
 					}
+				case let .stop(data):
+					return .stop(data)
+				case let .day(data):
+					return .day(data)
 				}
 			}()
 
@@ -589,6 +597,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 					parentId: nil,
 					children: []
 				)
+			case let .stop(data):
+				return Block(id: s.id, content: .stop(data), parentId: nil, children: [])
+			case let .day(data):
+				return Block(id: s.id, content: .day(data), parentId: nil, children: [])
 			}
         }
         let orderIds = blocks.map { $0.id }
@@ -638,6 +650,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 					case .video:
 						return .video(reference: media.reference, displayStyle: media.displayStyle)
 					}
+				case let .stop(data):
+					return .stop(data)
+				case let .day(data):
+					return .day(data)
 				}
 			}()
 			return EditorBlockSnapshot(
@@ -711,6 +727,12 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 				let ref = reference.trimmingCharacters(in: .whitespacesAndNewlines)
 				guard !ref.isEmpty else { continue }
 				parts.append("[](\(ref))")
+			case let .stop(data):
+				var lines = ["### \(data.title)"]
+				if !data.subtitle.isEmpty { lines.append(data.subtitle) }
+				parts.append(lines.joined(separator: "\n"))
+			case let .day(data):
+				parts.append("## \(data.title)")
 			}
 		}
 
@@ -1223,6 +1245,18 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			mediaCell.delegate = self
 			mediaCell.isSelectionMode = isSelectionMode
 			return mediaCell
+		case let .stop(data):
+			let cell = tableView.dequeueReusableCell(withIdentifier: StopCardCell.reuseId, for: indexPath)
+			guard let stopCell = cell as? StopCardCell else { return cell }
+			stopCell.configure(data)
+			stopCell.isSelectionMode = isSelectionMode
+			stopCell.onTap = { [weak self] id in self?.onTapStop?(id) }
+			return stopCell
+		case let .day(data):
+			let cell = tableView.dequeueReusableCell(withIdentifier: DayDividerCell.reuseId, for: indexPath)
+			guard let dayCell = cell as? DayDividerCell else { return cell }
+			dayCell.configure(title: data.title)
+			return dayCell
 		}
     }
 
