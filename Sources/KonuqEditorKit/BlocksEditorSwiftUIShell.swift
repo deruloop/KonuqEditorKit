@@ -4,8 +4,7 @@ public enum EditorBlockKind: Equatable, Codable {
 	case text(text: String, style: TextStyle)
 	case image(reference: String, displayStyle: MediaBlockDisplayStyle)
 	case video(reference: String, displayStyle: MediaBlockDisplayStyle)
-	case stop(EditorStopData)
-	case day(EditorDayData)
+	case location(EditorLocationData)
 }
 
 public struct EditorBlockSnapshot: Equatable, Codable {
@@ -65,6 +64,11 @@ public final class BlocksEditorShellModel: ObservableObject {
 		controller?.insertNewBlockAtCursor()
 	}
 
+	/// Inserts the given blocks as ordinary editor rows at the current cursor position.
+	public func insertBlocks(_ blocks: [EditorBlockSnapshot]) {
+		controller?.insertBlocksAtCursor(blocks)
+	}
+
 	public func replaceDictationText(_ text: String) {
 		controller?.replaceDictationText(text)
 	}
@@ -102,8 +106,8 @@ public struct BlocksEditorSwiftUIShellView: View {
 	var onSendToAnotherNote: (([EditorBlockSnapshot]) -> Void)? = nil
 	var onLinkToNote: (() -> Void)? = nil
 	var onOpenURL: ((URL) -> Void)? = nil
-	var onTapStop: ((String) -> Void)? = nil
-	var onTapDay: ((String) -> Void)? = nil
+	var onTapLocation: ((URL) -> Void)? = nil
+	var onAddStop: (() -> Void)? = nil
 	var onCopySelection: (() -> Void)? = nil
 	var onCutSelection: (() -> Void)? = nil
 	var toolbarTrailing: AnyView? = nil
@@ -115,8 +119,8 @@ public struct BlocksEditorSwiftUIShellView: View {
 		onSendToAnotherNote: (([EditorBlockSnapshot]) -> Void)? = nil,
 		onLinkToNote: (() -> Void)? = nil,
 		onOpenURL: ((URL) -> Void)? = nil,
-		onTapStop: ((String) -> Void)? = nil,
-		onTapDay: ((String) -> Void)? = nil,
+		onTapLocation: ((URL) -> Void)? = nil,
+		onAddStop: (() -> Void)? = nil,
 		onCopySelection: (() -> Void)? = nil,
 		onCutSelection: (() -> Void)? = nil,
 		toolbarTrailing: AnyView? = nil
@@ -130,8 +134,8 @@ public struct BlocksEditorSwiftUIShellView: View {
 		self.onCopySelection = onCopySelection
 		self.onCutSelection = onCutSelection
 		self.toolbarTrailing = toolbarTrailing
-		self.onTapStop = onTapStop
-		self.onTapDay = onTapDay
+		self.onTapLocation = onTapLocation
+		self.onAddStop = onAddStop
 	}
 
     public var body: some View {
@@ -140,8 +144,8 @@ public struct BlocksEditorSwiftUIShellView: View {
 			autoFocusOnAppear: autoFocusOnAppear,
 			onLinkToNote: onLinkToNote,
 			onOpenURL: onOpenURL,
-			onTapStop: onTapStop,
-			onTapDay: onTapDay
+			onTapLocation: onTapLocation,
+			onAddStop: onAddStop
 		)
 		.tint(Color(uiColor: KonuqEditor.theme.accent))
 		.toolbar {
@@ -288,16 +292,16 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
 	var autoFocusOnAppear: Bool
 	var onLinkToNote: (() -> Void)?
 	var onOpenURL: ((URL) -> Void)?
-	var onTapStop: ((String) -> Void)?
-	var onTapDay: ((String) -> Void)?
-    
+	var onTapLocation: ((URL) -> Void)?
+	var onAddStop: (() -> Void)?
+
     func makeUIViewController(context: Context) -> BlocksEditorViewController {
         let controller = BlocksEditorViewController()
 		controller.autoFocusOnAppear = autoFocusOnAppear
 		controller.onLinkToNote = onLinkToNote
 		controller.onOpenURL = onOpenURL
-		controller.onTapStop = onTapStop
-		controller.onTapDay = onTapDay
+		controller.onTapLocation = onTapLocation
+		controller.onAddStop = onAddStop
         controller.onSelectionStateChange = { [weak coordinator = context.coordinator] isSelectionMode, selectedCount in
             coordinator?.publishSelectionState(isSelectionMode: isSelectionMode, selectedCount: selectedCount)
         }
@@ -312,8 +316,8 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
 		uiViewController.autoFocusOnAppear = autoFocusOnAppear
 		uiViewController.onLinkToNote = onLinkToNote
 		uiViewController.onOpenURL = onOpenURL
-		uiViewController.onTapStop = onTapStop
-		uiViewController.onTapDay = onTapDay
+		uiViewController.onTapLocation = onTapLocation
+		uiViewController.onAddStop = onAddStop
 	}
     
     func makeCoordinator() -> Coordinator {

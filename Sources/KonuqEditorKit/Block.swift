@@ -26,28 +26,17 @@ public enum MediaBlockDisplayStyle: String, Equatable, Codable {
 	case large
 }
 
-/// A host-driven "stop" card embedded inline in the editor. The package renders it from
-/// these plain strings and reports taps via `id`; it knows nothing about the host's model.
-public struct EditorStopData: Equatable, Codable {
+/// A generic "location link" element: a link rendered with a pin icon and a label.
+/// Tapping opens `url`. It is a first-class, app-agnostic editor element rendered
+/// identically wherever the editor runs.
+public struct EditorLocationData: Equatable, Codable {
 	public var id: String
-	public var title: String
-	public var subtitle: String
-	public var meta: String
-	public init(id: String, title: String, subtitle: String = "", meta: String = "") {
+	public var label: String
+	public var url: String
+	public init(id: String = UUID().uuidString, label: String, url: String) {
 		self.id = id
-		self.title = title
-		self.subtitle = subtitle
-		self.meta = meta
-	}
-}
-
-/// A host-driven "day" divider embedded inline in the editor.
-public struct EditorDayData: Equatable, Codable {
-	public var id: String
-	public var title: String
-	public init(id: String, title: String) {
-		self.id = id
-		self.title = title
+		self.label = label
+		self.url = url
 	}
 }
 
@@ -65,8 +54,7 @@ struct MediaBlock: Equatable {
 enum BlockContent: Equatable {
 	case text(TextBlock)
 	case media(MediaBlock)
-	case stop(EditorStopData)
-	case day(EditorDayData)
+	case location(EditorLocationData)
 }
 
 struct Block: Identifiable, Equatable {

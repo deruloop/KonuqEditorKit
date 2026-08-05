@@ -173,6 +173,9 @@ final class KeyboardActionHandler {
 		case .presentLinkToNoteSheet:
 			return nil
 
+		case .addStop:
+			return nil
+
 		case let .pasteMultiline(text, range):
 			guard case .text(let textBlock) = info.content else { return nil }
 

@@ -43,8 +43,14 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     var onBlocksChanged: (([EditorBlockSnapshot]) -> Void)?
 	var onLinkToNote: (() -> Void)?
 	var onOpenURL: ((URL) -> Void)?
-	var onTapStop: ((String) -> Void)?
-	var onTapDay: ((String) -> Void)?
+	var onTapLocation: ((URL) -> Void)?
+	var onAddStop: (() -> Void)?
+
+	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode {
+		if onAddStop != nil { return .addStop }
+		if onLinkToNote != nil { return .linkToNote }
+		return .hidden
+	}
 
     init(initialEmptyStyle: TextStyle = .text) {
         self.initialEmptyStyle = initialEmptyStyle
@@ -76,8 +82,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         tableView.rowHeight = UITableView.automaticDimension
         tableView.register(BlockCell.self, forCellReuseIdentifier: BlockCell.reuseId)
 		tableView.register(MediaBlockCell.self, forCellReuseIdentifier: MediaBlockCell.reuseId)
-		tableView.register(StopCardCell.self, forCellReuseIdentifier: StopCardCell.reuseId)
-		tableView.register(DayDividerCell.self, forCellReuseIdentifier: DayDividerCell.reuseId)
+		tableView.register(LocationLinkCell.self, forCellReuseIdentifier: LocationLinkCell.reuseId)
         tableView.allowsSelection = false
         tableView.allowsMultipleSelection = false
         tableView.dragInteractionEnabled = true
@@ -371,6 +376,53 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		resetDictationState()
 	}
 
+	/// Inserts the given snapshots as ordinary editor rows after the block that currently
+	/// holds the cursor (or at the end when nothing is focused).
+	func insertBlocksAtCursor(_ snapshots: [EditorBlockSnapshot]) {
+		guard isSelectionMode == false, !snapshots.isEmpty else { return }
+
+		let root: UIView = view.window ?? view
+		var afterId: String? = lastTextBlockId()
+		if let textView = findFirstResponder(in: root) as? UITextView,
+		   let cell = enclosingBlockCell(for: textView) {
+			afterId = cell.blockId
+			textView.resignFirstResponder()
+		}
+
+		let newBlocks: [Block] = snapshots
+			.sorted { $0.position < $1.position }
+			.map { block(from: $0) }
+
+		var previousId = afterId
+		var lastInsertedTextId: String?
+		for block in newBlocks {
+			document.insert(block, after: previousId)
+			previousId = block.id
+			if case .text = block.content { lastInsertedTextId = block.id }
+		}
+
+		tableView.reloadData()
+		scheduleBlocksChanged(immediate: true)
+
+		if let focusId = lastInsertedTextId ?? previousId, let row = document.order.firstIndex(of: focusId) {
+			tableView.scrollToRow(at: IndexPath(row: row, section: 0), at: .middle, animated: true)
+		}
+	}
+
+	private func block(from snapshot: EditorBlockSnapshot) -> Block {
+		switch snapshot.kind {
+		case let .text(text, style):
+			let attributed = style == .code ? NSAttributedString(string: text) : parseInlineMarkdown(text)
+			return Block(id: snapshot.id, content: .text(TextBlock(text: attributed, style: style)), parentId: nil, children: [])
+		case let .image(reference, displayStyle):
+			return Block(id: snapshot.id, content: .media(MediaBlock(kind: .image, reference: reference, displayStyle: displayStyle)), parentId: nil, children: [])
+		case let .video(reference, displayStyle):
+			return Block(id: snapshot.id, content: .media(MediaBlock(kind: .video, reference: reference, displayStyle: displayStyle)), parentId: nil, children: [])
+		case let .location(data):
+			return Block(id: snapshot.id, content: .location(data), parentId: nil, children: [])
+		}
+	}
+
 	func replaceDictationText(_ text: String) {
 		guard isSelectionMode == false else { return }
 		let root: UIView = view.window ?? view
@@ -541,10 +593,8 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 					case .video:
 						return .video(reference: media.reference, displayStyle: media.displayStyle)
 					}
-				case let .stop(data):
-					return .stop(data)
-				case let .day(data):
-					return .day(data)
+				case let .location(data):
+					return .location(data)
 				}
 			}()
 
@@ -597,10 +647,8 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 					parentId: nil,
 					children: []
 				)
-			case let .stop(data):
-				return Block(id: s.id, content: .stop(data), parentId: nil, children: [])
-			case let .day(data):
-				return Block(id: s.id, content: .day(data), parentId: nil, children: [])
+			case let .location(data):
+				return Block(id: s.id, content: .location(data), parentId: nil, children: [])
 			}
         }
         let orderIds = blocks.map { $0.id }
@@ -650,10 +698,8 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 					case .video:
 						return .video(reference: media.reference, displayStyle: media.displayStyle)
 					}
-				case let .stop(data):
-					return .stop(data)
-				case let .day(data):
-					return .day(data)
+				case let .location(data):
+					return .location(data)
 				}
 			}()
 			return EditorBlockSnapshot(
@@ -727,12 +773,14 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 				let ref = reference.trimmingCharacters(in: .whitespacesAndNewlines)
 				guard !ref.isEmpty else { continue }
 				parts.append("[](\(ref))")
-			case let .stop(data):
-				var lines = ["### \(data.title)"]
-				if !data.subtitle.isEmpty { lines.append(data.subtitle) }
-				parts.append(lines.joined(separator: "\n"))
-			case let .day(data):
-				parts.append("## \(data.title)")
+			case let .location(data):
+				let label = data.label.isEmpty ? "Location" : data.label
+				let url = data.url.trimmingCharacters(in: .whitespacesAndNewlines)
+				if url.isEmpty {
+					parts.append("📍 \(label)")
+				} else {
+					parts.append("[📍 \(label)](\(url))")
+				}
 			}
 		}
 
@@ -1245,18 +1293,20 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			mediaCell.delegate = self
 			mediaCell.isSelectionMode = isSelectionMode
 			return mediaCell
-		case let .stop(data):
-			let cell = tableView.dequeueReusableCell(withIdentifier: StopCardCell.reuseId, for: indexPath)
-			guard let stopCell = cell as? StopCardCell else { return cell }
-			stopCell.configure(data)
-			stopCell.isSelectionMode = isSelectionMode
-			stopCell.onTap = { [weak self] id in self?.onTapStop?(id) }
-			return stopCell
-		case let .day(data):
-			let cell = tableView.dequeueReusableCell(withIdentifier: DayDividerCell.reuseId, for: indexPath)
-			guard let dayCell = cell as? DayDividerCell else { return cell }
-			dayCell.configure(title: data.title)
-			return dayCell
+		case let .location(data):
+			let cell = tableView.dequeueReusableCell(withIdentifier: LocationLinkCell.reuseId, for: indexPath)
+			guard let locationCell = cell as? LocationLinkCell else { return cell }
+			locationCell.configure(data)
+			locationCell.isSelectionMode = isSelectionMode
+			locationCell.onTap = { [weak self] url in
+				guard let self else { return }
+				if let onTapLocation = self.onTapLocation {
+					onTapLocation(url)
+				} else {
+					self.onOpenURL?(url)
+				}
+			}
+			return locationCell
 		}
     }
 
@@ -1332,6 +1382,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		}
 		if action == .presentLinkToNoteSheet {
 			onLinkToNote?()
+			return
+		}
+		if action == .addStop {
+			onAddStop?()
 			return
 		}
         if case .markdownTurnInto = action {

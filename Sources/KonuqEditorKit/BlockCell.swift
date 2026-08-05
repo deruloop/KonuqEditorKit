@@ -114,12 +114,22 @@ enum BlockFocusMoveDirection {
 	case down
 }
 
+/// Which action the trailing keyboard-accessory button performs. Hosts that provide an
+/// "add stop" handler get the pin button; hosts that provide only a "link to note" handler
+/// get the drop button; otherwise the button is hidden.
+enum KeyboardTrailingButtonMode {
+	case linkToNote
+	case addStop
+	case hidden
+}
+
 protocol BlockCellDelegate: AnyObject {
     func blockCell(_ cell: BlockCell, didChangeText text: NSAttributedString)
     func blockCell(_ cell: BlockCell, didTrigger action: KeyboardAction)
 	func blockCell(_ cell: BlockCell, didTapURL url: URL)
 	func blockCell(_ cell: BlockCell, didChangeInlineTypingModeBold isBold: Bool, italic isItalic: Bool)
 	func blockCell(_ cell: BlockCell, didRequestMoveFocus direction: BlockFocusMoveDirection)
+	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode { get }
 }
 
 protocol BlockSelectableCell: AnyObject {
@@ -340,9 +350,16 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 				guard let self else { return }
 				self.delegate?.blockCell(self, didTrigger: .insertDivider)
 			},
-			onLinkToNote: { [weak self] in
+			onTrailingAction: { [weak self] in
 				guard let self else { return }
-				self.delegate?.blockCell(self, didTrigger: .presentLinkToNoteSheet)
+				switch self.delegate?.keyboardTrailingButtonMode ?? .hidden {
+				case .addStop:
+					self.delegate?.blockCell(self, didTrigger: .addStop)
+				case .linkToNote:
+					self.delegate?.blockCell(self, didTrigger: .presentLinkToNoteSheet)
+				case .hidden:
+					break
+				}
 			},
 			onDone: { [weak self] in
 				self?.textView.resignFirstResponder()
@@ -1389,6 +1406,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 
     private func updateKeyboardAccessoryState() {
         guard let keyboardAccessoryView else { return }
+		keyboardAccessoryView.setTrailingMode(delegate?.keyboardTrailingButtonMode ?? .hidden)
 		let isDivider = isDividerBlock()
         keyboardAccessoryView.setState(
             isBoldSelected: transientBoldMode,
@@ -1652,7 +1670,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 	private let onCodeBlock: () -> Void
 	private let onCheckbox: () -> Void
 	private let onDivider: () -> Void
-	private let onLinkToNote: () -> Void
+	private let onTrailingAction: () -> Void
 	private let onDone: () -> Void
 
     private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
@@ -1665,7 +1683,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 	private let codeButton = UIButton(type: .system)
 	private let checkboxButton = UIButton(type: .system)
 	private let dividerButton = UIButton(type: .system)
-	private let linkToNoteButton = UIButton(type: .system)
+	private let trailingButton = UIButton(type: .system)
 	private let mediaButton = UIButton(type: .system)
 	private let pasteButton = UIButton(type: .system)
 	private let doneButton = UIButton(type: .system)
@@ -1679,7 +1697,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		onCodeBlock: @escaping () -> Void,
 		onCheckbox: @escaping () -> Void,
 		onDivider: @escaping () -> Void,
-		onLinkToNote: @escaping () -> Void,
+		onTrailingAction: @escaping () -> Void,
 		onDone: @escaping () -> Void
     ) {
 		self.onMedia = onMedia
@@ -1690,7 +1708,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		self.onCodeBlock = onCodeBlock
 		self.onCheckbox = onCheckbox
 		self.onDivider = onDivider
-		self.onLinkToNote = onLinkToNote
+		self.onTrailingAction = onTrailingAction
 		self.onDone = onDone
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 50), inputViewStyle: .keyboard)
         autoresizingMask = [.flexibleWidth]
@@ -1752,7 +1770,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		configureButton(codeButton, title: nil, systemImageName: "chevron.left.forwardslash.chevron.right", action: #selector(didTapCodeBlock))
 		configureButton(checkboxButton, title: nil, systemImageName: "checkmark.square", action: #selector(didTapCheckbox))
 		configureButton(dividerButton, title: nil, systemImageName: "minus", action: #selector(didTapDivider))
-		configureButton(linkToNoteButton, title: nil, systemImageName: "drop", action: #selector(didTapLinkToNote))
+		configureButton(trailingButton, title: nil, systemImageName: "drop", action: #selector(didTapTrailingAction))
 
         let base = UIFont.appSpaceGrotesk(size: 20, weight: .semibold)
         let baseScaled = UIFontMetrics(forTextStyle: .headline).scaledFont(for: base)
@@ -1775,7 +1793,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 			codeButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 			checkboxButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 			dividerButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
-			linkToNoteButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
+			trailingButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 		}
 
 		doneButton.setTitle("Done", for: .normal)
@@ -1798,7 +1816,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		stackView.addArrangedSubview(codeButton)
 		stackView.addArrangedSubview(checkboxButton)
 		stackView.addArrangedSubview(dividerButton)
-		stackView.addArrangedSubview(linkToNoteButton)
+		stackView.addArrangedSubview(trailingButton)
 		stackView.addArrangedSubview(pasteButton)
 
         setState(
@@ -1842,6 +1860,19 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		applySelectionStyle(to: dividerButton, selected: false)
 		applySelectionStyle(to: pasteButton, selected: false)
     }
+
+	func setTrailingMode(_ mode: KeyboardTrailingButtonMode) {
+		switch mode {
+		case .linkToNote:
+			trailingButton.isHidden = false
+			trailingButton.setImage(UIImage(systemName: "drop"), for: .normal)
+		case .addStop:
+			trailingButton.isHidden = false
+			trailingButton.setImage(UIImage(systemName: "mappin.and.ellipse"), for: .normal)
+		case .hidden:
+			trailingButton.isHidden = true
+		}
+	}
 
     private func configureButton(_ button: UIButton, title: String?, systemImageName: String?, action: Selector) {
 		if let title {
@@ -1922,8 +1953,8 @@ private final class KeyboardActionAccessoryView: UIInputView {
 	}
 
 	@objc
-	private func didTapLinkToNote() {
-		onLinkToNote()
+	private func didTapTrailingAction() {
+		onTrailingAction()
 	}
 
 	@objc

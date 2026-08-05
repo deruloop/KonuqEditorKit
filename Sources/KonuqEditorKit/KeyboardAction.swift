@@ -12,7 +12,8 @@ enum KeyboardAction: Equatable {
 	case insertDivider
 	case insertNewBlockWithText(text: String)
 	case presentLinkToNoteSheet
-    
+	case addStop
+
     static func build(attributedText: NSAttributedString, range: NSRange, replacement: String) -> Self? {
         let text = attributedText.string
         guard let textRange = Range(range, in: text) else { return nil }
