@@ -26,19 +26,6 @@ public enum MediaBlockDisplayStyle: String, Equatable, Codable {
 	case large
 }
 
-/// A generic "location link" element: a link rendered with a pin icon and a label.
-/// Tapping opens `url`. It is a first-class, app-agnostic editor element rendered
-/// identically wherever the editor runs.
-public struct EditorLocationData: Equatable, Codable {
-	public var id: String
-	public var label: String
-	public var url: String
-	public init(id: String = UUID().uuidString, label: String, url: String) {
-		self.id = id
-		self.label = label
-		self.url = url
-	}
-}
 
 struct TextBlock: Equatable {
 	var text: NSAttributedString
@@ -54,7 +41,6 @@ struct MediaBlock: Equatable {
 enum BlockContent: Equatable {
 	case text(TextBlock)
 	case media(MediaBlock)
-	case location(EditorLocationData)
 }
 
 struct Block: Identifiable, Equatable {

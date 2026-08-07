@@ -43,7 +43,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     var onBlocksChanged: (([EditorBlockSnapshot]) -> Void)?
 	var onLinkToNote: (() -> Void)?
 	var onOpenURL: ((URL) -> Void)?
-	var onTapLocation: ((URL) -> Void)?
 	var onAddStop: (() -> Void)?
 
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode {
@@ -82,7 +81,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         tableView.rowHeight = UITableView.automaticDimension
         tableView.register(BlockCell.self, forCellReuseIdentifier: BlockCell.reuseId)
 		tableView.register(MediaBlockCell.self, forCellReuseIdentifier: MediaBlockCell.reuseId)
-		tableView.register(LocationLinkCell.self, forCellReuseIdentifier: LocationLinkCell.reuseId)
         tableView.allowsSelection = false
         tableView.allowsMultipleSelection = false
         tableView.dragInteractionEnabled = true
@@ -418,8 +416,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			return Block(id: snapshot.id, content: .media(MediaBlock(kind: .image, reference: reference, displayStyle: displayStyle)), parentId: nil, children: [])
 		case let .video(reference, displayStyle):
 			return Block(id: snapshot.id, content: .media(MediaBlock(kind: .video, reference: reference, displayStyle: displayStyle)), parentId: nil, children: [])
-		case let .location(data):
-			return Block(id: snapshot.id, content: .location(data), parentId: nil, children: [])
 		}
 	}
 
@@ -593,8 +589,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 					case .video:
 						return .video(reference: media.reference, displayStyle: media.displayStyle)
 					}
-				case let .location(data):
-					return .location(data)
 				}
 			}()
 
@@ -647,8 +641,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 					parentId: nil,
 					children: []
 				)
-			case let .location(data):
-				return Block(id: s.id, content: .location(data), parentId: nil, children: [])
 			}
         }
         let orderIds = blocks.map { $0.id }
@@ -698,8 +690,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 					case .video:
 						return .video(reference: media.reference, displayStyle: media.displayStyle)
 					}
-				case let .location(data):
-					return .location(data)
 				}
 			}()
 			return EditorBlockSnapshot(
@@ -773,14 +763,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 				let ref = reference.trimmingCharacters(in: .whitespacesAndNewlines)
 				guard !ref.isEmpty else { continue }
 				parts.append("[](\(ref))")
-			case let .location(data):
-				let label = data.label.isEmpty ? "Location" : data.label
-				let url = data.url.trimmingCharacters(in: .whitespacesAndNewlines)
-				if url.isEmpty {
-					parts.append("📍 \(label)")
-				} else {
-					parts.append("[📍 \(label)](\(url))")
-				}
 			}
 		}
 
@@ -1293,20 +1275,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			mediaCell.delegate = self
 			mediaCell.isSelectionMode = isSelectionMode
 			return mediaCell
-		case let .location(data):
-			let cell = tableView.dequeueReusableCell(withIdentifier: LocationLinkCell.reuseId, for: indexPath)
-			guard let locationCell = cell as? LocationLinkCell else { return cell }
-			locationCell.configure(data)
-			locationCell.isSelectionMode = isSelectionMode
-			locationCell.onTap = { [weak self] url in
-				guard let self else { return }
-				if let onTapLocation = self.onTapLocation {
-					onTapLocation(url)
-				} else {
-					self.onOpenURL?(url)
-				}
-			}
-			return locationCell
 		}
     }
 

@@ -4,7 +4,6 @@ public enum EditorBlockKind: Equatable, Codable {
 	case text(text: String, style: TextStyle)
 	case image(reference: String, displayStyle: MediaBlockDisplayStyle)
 	case video(reference: String, displayStyle: MediaBlockDisplayStyle)
-	case location(EditorLocationData)
 }
 
 public struct EditorBlockSnapshot: Equatable, Codable {
@@ -106,7 +105,6 @@ public struct BlocksEditorSwiftUIShellView: View {
 	var onSendToAnotherNote: (([EditorBlockSnapshot]) -> Void)? = nil
 	var onLinkToNote: (() -> Void)? = nil
 	var onOpenURL: ((URL) -> Void)? = nil
-	var onTapLocation: ((URL) -> Void)? = nil
 	var onAddStop: (() -> Void)? = nil
 	var onCopySelection: (() -> Void)? = nil
 	var onCutSelection: (() -> Void)? = nil
@@ -119,7 +117,6 @@ public struct BlocksEditorSwiftUIShellView: View {
 		onSendToAnotherNote: (([EditorBlockSnapshot]) -> Void)? = nil,
 		onLinkToNote: (() -> Void)? = nil,
 		onOpenURL: ((URL) -> Void)? = nil,
-		onTapLocation: ((URL) -> Void)? = nil,
 		onAddStop: (() -> Void)? = nil,
 		onCopySelection: (() -> Void)? = nil,
 		onCutSelection: (() -> Void)? = nil,
@@ -134,7 +131,6 @@ public struct BlocksEditorSwiftUIShellView: View {
 		self.onCopySelection = onCopySelection
 		self.onCutSelection = onCutSelection
 		self.toolbarTrailing = toolbarTrailing
-		self.onTapLocation = onTapLocation
 		self.onAddStop = onAddStop
 	}
 
@@ -144,7 +140,6 @@ public struct BlocksEditorSwiftUIShellView: View {
 			autoFocusOnAppear: autoFocusOnAppear,
 			onLinkToNote: onLinkToNote,
 			onOpenURL: onOpenURL,
-			onTapLocation: onTapLocation,
 			onAddStop: onAddStop
 		)
 		.tint(Color(uiColor: KonuqEditor.theme.accent))
@@ -292,7 +287,6 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
 	var autoFocusOnAppear: Bool
 	var onLinkToNote: (() -> Void)?
 	var onOpenURL: ((URL) -> Void)?
-	var onTapLocation: ((URL) -> Void)?
 	var onAddStop: (() -> Void)?
 
     func makeUIViewController(context: Context) -> BlocksEditorViewController {
@@ -300,7 +294,6 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
 		controller.autoFocusOnAppear = autoFocusOnAppear
 		controller.onLinkToNote = onLinkToNote
 		controller.onOpenURL = onOpenURL
-		controller.onTapLocation = onTapLocation
 		controller.onAddStop = onAddStop
         controller.onSelectionStateChange = { [weak coordinator = context.coordinator] isSelectionMode, selectedCount in
             coordinator?.publishSelectionState(isSelectionMode: isSelectionMode, selectedCount: selectedCount)
@@ -316,7 +309,6 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
 		uiViewController.autoFocusOnAppear = autoFocusOnAppear
 		uiViewController.onLinkToNote = onLinkToNote
 		uiViewController.onOpenURL = onOpenURL
-		uiViewController.onTapLocation = onTapLocation
 		uiViewController.onAddStop = onAddStop
 	}
     
