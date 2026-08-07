@@ -2222,7 +2222,10 @@ private extension BlockCell {
 			updated.removeAttribute(.foregroundColor, range: range)
 			updated.removeAttribute(.underlineStyle, range: range)
 			updated.removeAttribute(.underlineColor, range: range)
-			updated.removeAttribute(.appInlineLinkUrl, range: range)
+			// NOTE: `.appInlineLinkUrl` is deliberately kept — it is the persistent source of
+			// truth for an external inline link (a map link has no note id and, once the
+			// `[label](url)` text is consumed, no markdown left to re-parse). `.link` is
+			// re-derived from it below so the link survives every later normalisation pass.
 		}
 
 		updated.enumerateAttribute(.appInlineNoteLinkId, in: NSRange(location: 0, length: updated.length), options: []) { value, range, _ in
@@ -2236,6 +2239,21 @@ private extension BlockCell {
 			guard let url = URL(string: "konuq://note/\(id)") else { return }
 			updated.addAttribute(.link, value: url, range: range)
 			updated.addAttribute(.appInlineLinkUrl, value: url.absoluteString, range: range)
+		}
+
+		// Re-derive `.link` for any range that still carries an `.appInlineLinkUrl` but lost its
+		// `.link` in the clearing pass above (external links: map links, pasted URLs). Note links
+		// already got theirs from the id pass, so the guard leaves them untouched.
+		updated.enumerateAttribute(.appInlineLinkUrl, in: NSRange(location: 0, length: updated.length), options: []) { value, range, _ in
+			let urlString: String? = {
+				if let s = value as? String { return s }
+				if let u = value as? URL { return u.absoluteString }
+				return nil
+			}()
+			guard let urlString, let url = URL(string: urlString) else { return }
+			if updated.attribute(.link, at: range.location, effectiveRange: nil) == nil {
+				updated.addAttribute(.link, value: url, range: range)
+			}
 		}
 
 		if let baseFont = textView.font {
