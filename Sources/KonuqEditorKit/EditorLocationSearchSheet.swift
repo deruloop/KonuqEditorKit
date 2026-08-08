@@ -6,18 +6,11 @@ import MapKit
 /// Type a place, pick a result, and the sheet hands back its display name and coordinates.
 public struct EditorLocationSearchSheet: View {
 
-	/// A resolved place chosen from the search results.
-	public struct Place: Equatable {
-		public let name: String
-		public let latitude: Double?
-		public let longitude: Double?
-	}
-
 	@Environment(\.dismiss) private var dismiss
 	@StateObject private var model = LocationSearchModel()
-	private let onPick: (Place) -> Void
+	private let onPick: (EditorLocationLink.Place) -> Void
 
-	public init(onPick: @escaping (Place) -> Void) {
+	public init(onPick: @escaping (EditorLocationLink.Place) -> Void) {
 		self.onPick = onPick
 	}
 
@@ -66,7 +59,7 @@ public struct EditorLocationSearchSheet: View {
 				let item = response?.mapItems.first
 				let coordinate = item?.placemark.coordinate
 				let name = item?.name ?? completion.title
-				onPick(Place(name: name, latitude: coordinate?.latitude, longitude: coordinate?.longitude))
+				onPick(EditorLocationLink.Place(name: name, latitude: coordinate?.latitude, longitude: coordinate?.longitude))
 				dismiss()
 			}
 		}
