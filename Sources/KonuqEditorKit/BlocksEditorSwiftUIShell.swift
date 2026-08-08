@@ -105,7 +105,7 @@ public struct BlocksEditorSwiftUIShellView: View {
 	var onSendToAnotherNote: (([EditorBlockSnapshot]) -> Void)? = nil
 	var onLinkToNote: (() -> Void)? = nil
 	var onOpenURL: ((URL) -> Void)? = nil
-	var onAddStop: (() -> Void)? = nil
+	var onInsertLocation: (() -> Void)? = nil
 	var onCopySelection: (() -> Void)? = nil
 	var onCutSelection: (() -> Void)? = nil
 	var toolbarTrailing: AnyView? = nil
@@ -117,7 +117,7 @@ public struct BlocksEditorSwiftUIShellView: View {
 		onSendToAnotherNote: (([EditorBlockSnapshot]) -> Void)? = nil,
 		onLinkToNote: (() -> Void)? = nil,
 		onOpenURL: ((URL) -> Void)? = nil,
-		onAddStop: (() -> Void)? = nil,
+		onInsertLocation: (() -> Void)? = nil,
 		onCopySelection: (() -> Void)? = nil,
 		onCutSelection: (() -> Void)? = nil,
 		toolbarTrailing: AnyView? = nil
@@ -131,7 +131,7 @@ public struct BlocksEditorSwiftUIShellView: View {
 		self.onCopySelection = onCopySelection
 		self.onCutSelection = onCutSelection
 		self.toolbarTrailing = toolbarTrailing
-		self.onAddStop = onAddStop
+		self.onInsertLocation = onInsertLocation
 	}
 
     public var body: some View {
@@ -140,7 +140,7 @@ public struct BlocksEditorSwiftUIShellView: View {
 			autoFocusOnAppear: autoFocusOnAppear,
 			onLinkToNote: onLinkToNote,
 			onOpenURL: onOpenURL,
-			onAddStop: onAddStop
+			onInsertLocation: onInsertLocation
 		)
 		.tint(Color(uiColor: KonuqEditor.theme.accent))
 		.toolbar {
@@ -287,14 +287,14 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
 	var autoFocusOnAppear: Bool
 	var onLinkToNote: (() -> Void)?
 	var onOpenURL: ((URL) -> Void)?
-	var onAddStop: (() -> Void)?
+	var onInsertLocation: (() -> Void)?
 
     func makeUIViewController(context: Context) -> BlocksEditorViewController {
         let controller = BlocksEditorViewController()
 		controller.autoFocusOnAppear = autoFocusOnAppear
 		controller.onLinkToNote = onLinkToNote
 		controller.onOpenURL = onOpenURL
-		controller.onAddStop = onAddStop
+		controller.onInsertLocation = onInsertLocation
         controller.onSelectionStateChange = { [weak coordinator = context.coordinator] isSelectionMode, selectedCount in
             coordinator?.publishSelectionState(isSelectionMode: isSelectionMode, selectedCount: selectedCount)
         }
@@ -309,7 +309,7 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
 		uiViewController.autoFocusOnAppear = autoFocusOnAppear
 		uiViewController.onLinkToNote = onLinkToNote
 		uiViewController.onOpenURL = onOpenURL
-		uiViewController.onAddStop = onAddStop
+		uiViewController.onInsertLocation = onInsertLocation
 	}
     
     func makeCoordinator() -> Coordinator {

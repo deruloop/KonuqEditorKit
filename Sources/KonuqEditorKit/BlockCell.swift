@@ -119,7 +119,6 @@ enum BlockFocusMoveDirection {
 /// get the drop button; otherwise the button is hidden.
 enum KeyboardTrailingButtonMode {
 	case linkToNote
-	case addStop
 	case hidden
 }
 
@@ -130,6 +129,8 @@ protocol BlockCellDelegate: AnyObject {
 	func blockCell(_ cell: BlockCell, didChangeInlineTypingModeBold isBold: Bool, italic isItalic: Bool)
 	func blockCell(_ cell: BlockCell, didRequestMoveFocus direction: BlockFocusMoveDirection)
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode { get }
+	/// Whether the host wants the dedicated location button (insert a `📍 place` link).
+	var keyboardLocationButtonEnabled: Bool { get }
 }
 
 protocol BlockSelectableCell: AnyObject {
@@ -353,13 +354,15 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 			onTrailingAction: { [weak self] in
 				guard let self else { return }
 				switch self.delegate?.keyboardTrailingButtonMode ?? .hidden {
-				case .addStop:
-					self.delegate?.blockCell(self, didTrigger: .addStop)
 				case .linkToNote:
 					self.delegate?.blockCell(self, didTrigger: .presentLinkToNoteSheet)
 				case .hidden:
 					break
 				}
+			},
+			onLocation: { [weak self] in
+				guard let self else { return }
+				self.delegate?.blockCell(self, didTrigger: .insertLocation)
 			},
 			onDone: { [weak self] in
 				self?.textView.resignFirstResponder()
@@ -1407,6 +1410,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     private func updateKeyboardAccessoryState() {
         guard let keyboardAccessoryView else { return }
 		keyboardAccessoryView.setTrailingMode(delegate?.keyboardTrailingButtonMode ?? .hidden)
+		keyboardAccessoryView.setLocationButtonVisible(delegate?.keyboardLocationButtonEnabled ?? false)
 		let isDivider = isDividerBlock()
         keyboardAccessoryView.setState(
             isBoldSelected: transientBoldMode,
@@ -1671,6 +1675,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 	private let onCheckbox: () -> Void
 	private let onDivider: () -> Void
 	private let onTrailingAction: () -> Void
+	private let onLocation: () -> Void
 	private let onDone: () -> Void
 
     private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
@@ -1684,6 +1689,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 	private let checkboxButton = UIButton(type: .system)
 	private let dividerButton = UIButton(type: .system)
 	private let trailingButton = UIButton(type: .system)
+	private let locationButton = UIButton(type: .system)
 	private let mediaButton = UIButton(type: .system)
 	private let pasteButton = UIButton(type: .system)
 	private let doneButton = UIButton(type: .system)
@@ -1698,6 +1704,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		onCheckbox: @escaping () -> Void,
 		onDivider: @escaping () -> Void,
 		onTrailingAction: @escaping () -> Void,
+		onLocation: @escaping () -> Void,
 		onDone: @escaping () -> Void
     ) {
 		self.onMedia = onMedia
@@ -1709,6 +1716,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		self.onCheckbox = onCheckbox
 		self.onDivider = onDivider
 		self.onTrailingAction = onTrailingAction
+		self.onLocation = onLocation
 		self.onDone = onDone
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 50), inputViewStyle: .keyboard)
         autoresizingMask = [.flexibleWidth]
@@ -1771,6 +1779,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		configureButton(checkboxButton, title: nil, systemImageName: "checkmark.square", action: #selector(didTapCheckbox))
 		configureButton(dividerButton, title: nil, systemImageName: "minus", action: #selector(didTapDivider))
 		configureButton(trailingButton, title: nil, systemImageName: "drop", action: #selector(didTapTrailingAction))
+		configureButton(locationButton, title: nil, systemImageName: "mappin.and.ellipse", action: #selector(didTapLocation))
 
         let base = UIFont.appSpaceGrotesk(size: 20, weight: .semibold)
         let baseScaled = UIFontMetrics(forTextStyle: .headline).scaledFont(for: base)
@@ -1794,6 +1803,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 			checkboxButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 			dividerButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 			trailingButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
+			locationButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 		}
 
 		doneButton.setTitle("Done", for: .normal)
@@ -1817,7 +1827,9 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		stackView.addArrangedSubview(checkboxButton)
 		stackView.addArrangedSubview(dividerButton)
 		stackView.addArrangedSubview(trailingButton)
+		stackView.addArrangedSubview(locationButton)
 		stackView.addArrangedSubview(pasteButton)
+		locationButton.isHidden = true
 
         setState(
 			isBoldSelected: false,
@@ -1866,12 +1878,15 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		case .linkToNote:
 			trailingButton.isHidden = false
 			trailingButton.setImage(UIImage(systemName: "drop"), for: .normal)
-		case .addStop:
-			trailingButton.isHidden = false
-			trailingButton.setImage(UIImage(systemName: "mappin.and.ellipse"), for: .normal)
 		case .hidden:
 			trailingButton.isHidden = true
 		}
+	}
+
+	/// Shows/hides the dedicated location button, independent of the trailing (link) button,
+	/// so a host can offer both note-linking and location insertion at once.
+	func setLocationButtonVisible(_ visible: Bool) {
+		locationButton.isHidden = !visible
 	}
 
     private func configureButton(_ button: UIButton, title: String?, systemImageName: String?, action: Selector) {
@@ -1950,6 +1965,11 @@ private final class KeyboardActionAccessoryView: UIInputView {
 	@objc
 	private func didTapDivider() {
 		onDivider()
+	}
+
+	@objc
+	private func didTapLocation() {
+		onLocation()
 	}
 
 	@objc

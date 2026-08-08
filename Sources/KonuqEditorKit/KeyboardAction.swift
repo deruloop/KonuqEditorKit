@@ -12,7 +12,7 @@ enum KeyboardAction: Equatable {
 	case insertDivider
 	case insertNewBlockWithText(text: String)
 	case presentLinkToNoteSheet
-	case addStop
+	case insertLocation
 
     static func build(attributedText: NSAttributedString, range: NSRange, replacement: String) -> Self? {
         let text = attributedText.string

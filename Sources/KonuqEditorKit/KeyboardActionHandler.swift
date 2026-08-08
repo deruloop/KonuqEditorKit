@@ -173,7 +173,7 @@ final class KeyboardActionHandler {
 		case .presentLinkToNoteSheet:
 			return nil
 
-		case .addStop:
+		case .insertLocation:
 			return nil
 
 		case let .pasteMultiline(text, range):

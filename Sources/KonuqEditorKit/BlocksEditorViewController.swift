@@ -43,13 +43,14 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     var onBlocksChanged: (([EditorBlockSnapshot]) -> Void)?
 	var onLinkToNote: (() -> Void)?
 	var onOpenURL: ((URL) -> Void)?
-	var onAddStop: (() -> Void)?
+	var onInsertLocation: (() -> Void)?
 
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode {
-		if onAddStop != nil { return .addStop }
 		if onLinkToNote != nil { return .linkToNote }
 		return .hidden
 	}
+
+	var keyboardLocationButtonEnabled: Bool { onInsertLocation != nil }
 
     init(initialEmptyStyle: TextStyle = .text) {
         self.initialEmptyStyle = initialEmptyStyle
@@ -1352,8 +1353,8 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			onLinkToNote?()
 			return
 		}
-		if action == .addStop {
-			onAddStop?()
+		if action == .insertLocation {
+			onInsertLocation?()
 			return
 		}
         if case .markdownTurnInto = action {
