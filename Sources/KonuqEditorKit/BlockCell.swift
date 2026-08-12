@@ -714,22 +714,18 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 			clearLinkTypingAttributes()
 		}
 
-		if style != .code, text != "\n", text.isEmpty == false, (isInlineTypingActive() || isHeadingStyle(style)) {
+		// Only take over insertion for active inline bold/italic typing. Heading styles used to
+		// be forced through here too, but manual insertion reassigns `attributedText` on every
+		// keystroke, which resets the text-input session — that flickered the shift key and let
+		// autocorrect inject characters. Their font comes from typingAttributes, so plain
+		// insertion handles them correctly.
+		if style != .code, text != "\n", text.isEmpty == false, isInlineTypingActive() {
 			applyManualInsert(text: text, range: range)
 			return false
 		}
 
         return true
     }
-
-	private func isHeadingStyle(_ style: TextStyle) -> Bool {
-		switch style {
-		case .title, .description, .heading3, .heading4, .heading5, .heading6:
-			return true
-		default:
-			return false
-		}
-	}
 
 	private func resolvedBaseFontForCurrentStyle() -> UIFont {
 		func scaled(_ font: UIFont, textStyle: UIFont.TextStyle) -> UIFont {
