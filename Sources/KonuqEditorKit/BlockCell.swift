@@ -465,6 +465,18 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
         delegate?.blockCell(self, didChangeText: textView.attributedText)
     }
 
+    // Suppress the text view's built-in link opening. Links are routed through our own tap
+    // gesture (`didTapTextView` → `didTapURL` → the host's `onOpenURL`) so the host can decide
+    // what happens — e.g. apply the user's "which map app" choice. Without this, tapping a link
+    // fired BOTH: the system opened it immediately AND our handler ran, so a location link went
+    // straight to Apple Maps while the "ask" chooser also appeared.
+    func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
+        if case .link = textItem.content {
+            return nil
+        }
+        return defaultAction
+    }
+
     func textViewDidBeginEditing(_ textView: UITextView) {
         updateKeyboardAccessoryState()
         if let keyboardAccessoryView {
