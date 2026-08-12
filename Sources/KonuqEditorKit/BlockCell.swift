@@ -1031,6 +1031,11 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 			}
         }
         
+        // Setting `textView.font` above drops `.foregroundColor` from typingAttributes; restore
+        // it so freshly typed characters are already coloured and the base-attributes pass never
+        // has to rewrite the string mid-keystroke (which would reset the input session).
+        textView.typingAttributes[.foregroundColor] = baseTextColor()
+
         if style != .code {
             rebaseInlineFonts()
         }
@@ -1567,32 +1572,31 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		if textView.textColor != baseColor {
 			textView.textColor = baseColor
 		}
-
-		let current = textView.attributedText ?? NSAttributedString(string: "")
-		guard current.length > 0 else { return }
-		let selection = textView.selectedRange
-
-		let updated = NSMutableAttributedString(attributedString: current)
-		let full = NSRange(location: 0, length: updated.length)
-
-		var needsUpdate = false
-		updated.enumerateAttribute(.foregroundColor, in: full, options: []) { value, range, _ in
-			if value == nil {
-				updated.addAttribute(.foregroundColor, value: baseColor, range: range)
-				needsUpdate = true
-			}
+		// Keep freshly typed characters coloured via typingAttributes so we never have to
+		// rewrite the string while the user is typing.
+		if (textView.typingAttributes[.foregroundColor] as? UIColor) != baseColor {
+			textView.typingAttributes[.foregroundColor] = baseColor
 		}
-		guard needsUpdate else { return }
 
-		isApplyingBaseTextAttributes = true
-		textView.attributedText = updated
-		let clampedLocation = min(max(selection.location, 0), updated.length)
-		let clampedLength = min(max(selection.length, 0), max(updated.length - clampedLocation, 0))
-		let clamped = NSRange(location: clampedLocation, length: clampedLength)
-		if textView.selectedRange != clamped {
-			textView.selectedRange = clamped
+		let storage = textView.textStorage
+		guard storage.length > 0 else { return }
+		let full = NSRange(location: 0, length: storage.length)
+
+		var missingRanges: [NSRange] = []
+		storage.enumerateAttribute(.foregroundColor, in: full, options: []) { value, range, _ in
+			if value == nil { missingRanges.append(range) }
 		}
-		isApplyingBaseTextAttributes = false
+		guard !missingRanges.isEmpty else { return }
+
+		// Colour only the uncoloured ranges, in place. Mutating text-storage attributes does not
+		// move the caret or reset the text-input session the way reassigning `attributedText`
+		// does — reassigning mid-keystroke is what broke autocapitalisation and let autocorrect
+		// inject characters, most visibly in heading/title blocks.
+		storage.beginEditing()
+		for range in missingRanges {
+			storage.addAttribute(.foregroundColor, value: baseColor, range: range)
+		}
+		storage.endEditing()
 	}
 
 	private func applyInlineTagAttributesIfNeeded(preservingSelection selection: NSRange) {
