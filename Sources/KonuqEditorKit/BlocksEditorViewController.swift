@@ -32,10 +32,13 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	private var keyboardObservers: [NSObjectProtocol] = []
     var autoFocusOnAppear: Bool = true
     private var isSelectionMode = false
-    /// Tracks a block whose full text was just selected, so moving focus to another
-    /// row can auto-switch into multi-block selection.
-    private var pendingFullSelectionBlockId: String?
-    private var pendingFullSelectionTime: CFTimeInterval = 0
+    /// Anchor row of an in-progress "drag text selection beyond the row" gesture
+    /// that auto-switched into multi-block selection.
+    private var dragSelectionAnchorRow: Int?
+    /// True while dictation text is being applied programmatically, so the manual-edit
+    /// interrupt logic in didChangeText doesn't fire (it would restart the recognizer
+    /// on every partial result and kill the session).
+    private var isApplyingDictationText = false
 
     /// Dedicated undo manager for block-level operations (delete/restore). Text
     /// editing keeps using each UITextView's own undo manager; this one is active
@@ -48,7 +51,9 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         guard isSelectionMode else { return nil }
         let copy = UIKeyCommand(input: "c", modifierFlags: .command, action: #selector(handleSelectionCopyCommand))
         let cut = UIKeyCommand(input: "x", modifierFlags: .command, action: #selector(handleSelectionCutCommand))
-        let del = UIKeyCommand(input: "\u{8}", modifierFlags: .command, action: #selector(handleSelectionDeleteCommand))
+        // Plain backspace: in selection mode no text view is editing, so it can't
+        // clash with typing.
+        let del = UIKeyCommand(input: "\u{8}", modifierFlags: [], action: #selector(handleSelectionDeleteCommand))
         let selectAll = UIKeyCommand(input: "a", modifierFlags: .command, action: #selector(handleSelectionSelectAllCommand))
         let undo = UIKeyCommand(input: "z", modifierFlags: .command, action: #selector(handleUndoCommand))
         let redo = UIKeyCommand(input: "z", modifierFlags: [.command, .shift], action: #selector(handleRedoCommand))
@@ -58,9 +63,22 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         return [copy, cut, del, selectAll, undo, redo]
     }
 
-    @objc private func handleSelectionCopyCommand() { copySelectedBlocksToPasteboard() }
-    @objc private func handleSelectionCutCommand() { cutSelectedBlocksToPasteboard() }
-    @objc private func handleSelectionDeleteCommand() { deleteSelectedBlocks() }
+    // The shortcuts mirror the selection-toolbar buttons exactly: act, exit
+    // selection mode, then fire the same feedback the buttons trigger (toast).
+    @objc private func handleSelectionCopyCommand() {
+        copySelectedBlocksToPasteboard()
+        setSelectionMode(false)
+        onCopyShortcut?()
+    }
+    @objc private func handleSelectionCutCommand() {
+        cutSelectedBlocksToPasteboard()
+        setSelectionMode(false)
+        onCutShortcut?()
+    }
+    @objc private func handleSelectionDeleteCommand() {
+        deleteSelectedBlocks()
+        if isSelectionMode { setSelectionMode(false) }
+    }
     @objc private func handleSelectionSelectAllCommand() { selectAllBlocks() }
     @objc private func handleUndoCommand() { blockUndoManager.undo() }
     @objc private func handleRedoCommand() { blockUndoManager.redo() }
@@ -80,6 +98,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	/// Fired when the user manually edits the dictation target block mid-recording,
 	/// so the speech controller can reset its cumulative transcript.
 	var onDictationInterrupted: (() -> Void)?
+	/// Feedback hooks fired by the ⌘C/⌘X selection shortcuts, wired to the same
+	/// closures as the selection-toolbar buttons (e.g. the "Copied" toast).
+	var onCopyShortcut: (() -> Void)?
+	var onCutShortcut: (() -> Void)?
 
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode {
 		if onLinkToNote != nil { return .linkToNote }
@@ -149,6 +171,13 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         longPress.minimumPressDuration = 0.25
         longPress.allowableMovement = 8
         tableView.addGestureRecognizer(longPress)
+
+        // Dragging a text selection past the row's bounds auto-switches into
+        // multi-block selection (see handleSelectionEscapePan).
+        let selectionPan = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionEscapePan(_:)))
+        selectionPan.delegate = self
+        selectionPan.cancelsTouchesInView = false
+        tableView.addGestureRecognizer(selectionPan)
 
         let backgroundTap = UITapGestureRecognizer(target: self, action: #selector(handleBackgroundTap(_:)))
         backgroundTap.delegate = self
@@ -561,11 +590,13 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		updated.append(NSAttributedString(string: text, attributes: attrs))
 		dictationRange = NSRange(location: dictationStart, length: max(0, updated.length - dictationStart))
 
+		isApplyingDictationText = true
 		textView.attributedText = updated
 		let selection = NSRange(location: updated.length, length: 0)
 		textView.selectedRange = selection
 		cell.didExternallySetText(preservingSelection: selection)
 		blockCell(cell, didChangeText: updated)
+		isApplyingDictationText = false
 	}
 
 	func endDictation() {
@@ -1430,10 +1461,12 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         tableView.beginUpdates()
         tableView.endUpdates()
 		scheduleBlocksChanged()
-		// Dictation updates text programmatically (no delegate callback), so this
-		// firing on the dictation target means the user edited by hand: re-baseline
-		// the prefix and reset the transcript so old speech isn't re-inserted.
-		if cell.blockId == dictationTargetBlockId {
+		// When this fires on the dictation target while we are NOT programmatically
+		// applying a recognition result, the user edited by hand: re-baseline the
+		// prefix and reset the transcript so old speech isn't re-inserted. (The
+		// isApplyingDictationText guard is critical — without it every partial
+		// result would restart the recognizer and kill the session.)
+		if isApplyingDictationText == false, cell.blockId == dictationTargetBlockId {
 			dictationPrefix = text
 			dictationRange = nil
 			onDictationInterrupted?()
@@ -1442,34 +1475,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 
 	func blockCell(_ cell: BlockCell, didTapURL url: URL) {
 		onOpenURL?(url)
-	}
-
-	func blockCellDidBeginEditing(_ cell: BlockCell) {
-		guard let pending = pendingFullSelectionBlockId else { return }
-		let elapsed = CACurrentMediaTime() - pendingFullSelectionTime
-		pendingFullSelectionBlockId = nil
-		// The user selected a whole block's text and then moved to another row within
-		// a beat — treat it as intent to select blocks (not edit), and switch to
-		// multi-block selection with both rows, instead of requiring a long-press.
-		guard elapsed < 1.0, pending != cell.blockId else { return }
-		guard let firstRow = document.order.firstIndex(of: pending),
-			  let secondRow = document.order.firstIndex(of: cell.blockId) else { return }
-		tableView.endEditing(true)
-		setSelectionMode(true)
-		reselect([
-			IndexPath(row: firstRow, section: 0),
-			IndexPath(row: secondRow, section: 0)
-		])
-		UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-	}
-
-	func blockCell(_ cell: BlockCell, didEndEditingWithFullSelection isFull: Bool) {
-		if isFull {
-			pendingFullSelectionBlockId = cell.blockId
-			pendingFullSelectionTime = CACurrentMediaTime()
-		} else if pendingFullSelectionBlockId == cell.blockId {
-			pendingFullSelectionBlockId = nil
-		}
 	}
 
 	func blockCell(_ cell: BlockCell, didPasteBlocks snapshots: [EditorBlockSnapshot]) {
@@ -2044,6 +2049,66 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         reselect([indexPath])
     }
 
+    /// While a text selection is active inside a block, dragging past the row's
+    /// vertical bounds switches into multi-block selection and rubber-bands rows
+    /// between the anchor row and the pointer — no long-press needed.
+    @objc
+    private func handleSelectionEscapePan(_ gesture: UIPanGestureRecognizer) {
+        let location = gesture.location(in: tableView)
+
+        switch gesture.state {
+        case .changed:
+            if isSelectionMode {
+                guard dragSelectionAnchorRow != nil else { return }
+                updateDragSelection(to: location)
+                return
+            }
+            guard tableView.hasActiveDrag == false else { return }
+            let root: UIView = view.window ?? view
+            guard let textView = findFirstResponder(in: root) as? UITextView,
+                  let cell = enclosingBlockCell(for: textView) else { return }
+            guard textView.selectedRange.length > 0 else { return }
+            let cellFrame = tableView.convert(cell.bounds, from: cell)
+            // Vertical escape only: horizontal overshoot is still text selection.
+            guard location.y < cellFrame.minY || location.y > cellFrame.maxY else { return }
+            guard let anchorRow = document.order.firstIndex(of: cell.blockId) else { return }
+
+            textView.resignFirstResponder()
+            setSelectionMode(true)
+            dragSelectionAnchorRow = anchorRow
+            updateDragSelection(to: location)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        case .ended, .cancelled, .failed:
+            dragSelectionAnchorRow = nil
+        default:
+            break
+        }
+    }
+
+    private func updateDragSelection(to location: CGPoint) {
+        guard let anchor = dragSelectionAnchorRow else { return }
+        guard document.order.isEmpty == false else { return }
+        let lastRow = document.order.count - 1
+        let targetRow: Int = {
+            if let ip = tableView.indexPathForRow(at: location) { return min(max(ip.row, 0), lastRow) }
+            return location.y <= 0 ? 0 : lastRow
+        }()
+
+        let lower = min(anchor, targetRow)
+        let upper = max(anchor, targetRow)
+        let desired = Set(lower...upper)
+        let current = Set((tableView.indexPathsForSelectedRows ?? []).map { $0.row })
+        for row in current.subtracting(desired) {
+            tableView.deselectRow(at: IndexPath(row: row, section: 0), animated: false)
+        }
+        for row in desired.subtracting(current) {
+            let indexPath = IndexPath(row: row, section: 0)
+            tableView.selectRow(at: indexPath, animated: false, scrollPosition: .none)
+            (tableView.cellForRow(at: indexPath) as? BlockSelectableCell)?.isSelectionMode = true
+        }
+        notifySelectionState()
+    }
+
     @objc
     private func handleBackgroundTap(_ gesture: UITapGestureRecognizer) {
         guard gesture.state == .ended else { return }
@@ -2052,21 +2117,84 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 
         let location = gesture.location(in: tableView)
         let hitView = tableView.hitTest(location, with: nil)
-        if isInsideEditorCell(hitView) { return }
+        if shouldIgnoreCanvasTap(on: hitView) { return }
 
+        // Canvas feel: a tap that misses the text itself (row padding, the gap
+        // between rows, side margins) lands on the nearest text block with the
+        // caret at the tapped position — instead of doing nothing or jumping to
+        // the end of the note.
+        if let indexPath = nearestRowIndexPath(to: location) {
+            let blockId = document.order[indexPath.row]
+            guard let block = document.block(id: blockId) else { return }
+            if case .media = block.content { return } // leave taps around media alone
+            focusTextCell(at: indexPath, blockId: blockId, tapLocation: location)
+            return
+        }
+
+        // Far below the content: keep the "continue writing at the end" behaviour.
         focusLastBlock()
     }
 
-    private func isInsideEditorCell(_ view: UIView?) -> Bool {
+    /// Taps on the text itself or on in-cell controls (checkbox button, media
+    /// actions) must keep their native behaviour.
+    private func shouldIgnoreCanvasTap(on view: UIView?) -> Bool {
         var current = view
         while let v = current {
             if v is UITextView { return true }
-			if v is UITableViewCell { return true }
+            if v is UIControl { return true }
             current = v.superview
         }
         return false
     }
-    
+
+    /// The row containing the point, or the vertically nearest row when the point
+    /// is in a gap. Returns nil for points well below the last row (the "empty
+    /// canvas" area at the end of the note).
+    private func nearestRowIndexPath(to location: CGPoint) -> IndexPath? {
+        if let ip = tableView.indexPathForRow(at: location), ip.row < document.order.count { return ip }
+        let count = document.order.count
+        guard count > 0 else { return nil }
+
+        let lastFrame = tableView.rectForRow(at: IndexPath(row: count - 1, section: 0))
+        if location.y > lastFrame.maxY + 60 { return nil }
+
+        var best: (indexPath: IndexPath, distance: CGFloat)?
+        for row in 0..<count {
+            let frame = tableView.rectForRow(at: IndexPath(row: row, section: 0))
+            let distance: CGFloat
+            if location.y < frame.minY {
+                distance = frame.minY - location.y
+            } else if location.y > frame.maxY {
+                distance = location.y - frame.maxY
+            } else {
+                distance = 0
+            }
+            if best == nil || distance < best!.distance {
+                best = (IndexPath(row: row, section: 0), distance)
+            }
+        }
+        return best?.indexPath
+    }
+
+    private func focusTextCell(at indexPath: IndexPath, blockId: String, tapLocation: CGPoint) {
+        guard let cell = tableView.cellForRow(at: indexPath) as? BlockCell else {
+            focus(blockId: blockId)
+            return
+        }
+        let textView = cell.textView
+        let pointInTextView = tableView.convert(tapLocation, to: textView)
+        let clamped = CGPoint(
+            x: min(max(pointInTextView.x, 0), max(textView.bounds.width - 1, 0)),
+            y: min(max(pointInTextView.y, 0), max(textView.bounds.height - 1, 0))
+        )
+        textView.becomeFirstResponder()
+        if let position = textView.closestPosition(to: clamped) {
+            textView.selectedTextRange = textView.textRange(from: position, to: position)
+        } else {
+            textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
+        }
+    }
+
     private func notifySelectionState() {
         let count = tableView.indexPathsForSelectedRows?.count ?? 0
         onSelectionStateChange?(isSelectionMode, count)

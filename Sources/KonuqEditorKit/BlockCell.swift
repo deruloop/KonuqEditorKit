@@ -141,8 +141,6 @@ protocol BlockCellDelegate: AnyObject {
     func blockCell(_ cell: BlockCell, didTrigger action: KeyboardAction)
     func blockCell(_ cell: BlockCell, didPasteBlocks snapshots: [EditorBlockSnapshot])
 	func blockCell(_ cell: BlockCell, didTapURL url: URL)
-	func blockCellDidBeginEditing(_ cell: BlockCell)
-	func blockCell(_ cell: BlockCell, didEndEditingWithFullSelection isFull: Bool)
 	func blockCell(_ cell: BlockCell, didChangeInlineTypingModeBold isBold: Bool, italic isItalic: Bool)
 	func blockCell(_ cell: BlockCell, didRequestMoveFocus direction: BlockFocusMoveDirection)
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode { get }
@@ -509,7 +507,6 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     }
 
     func textViewDidBeginEditing(_ textView: UITextView) {
-        delegate?.blockCellDidBeginEditing(self)
         updateKeyboardAccessoryState()
         if let keyboardAccessoryView {
             textView.inputAccessoryView = keyboardAccessoryView
@@ -527,32 +524,15 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
-        // Captured before the inline-attribute passes below may adjust the selection.
-        // Used to auto-switch to block selection when the user had a whole block
-        // selected and then moved to another row.
-        let endedWithFullSelection = isFullTextSelection()
         if let keyboardAccessoryView {
             textView.inputAccessoryView = nil
         }
-		if isApplyingInlineTagAttributes { delegate?.blockCell(self, didEndEditingWithFullSelection: endedWithFullSelection); return }
-		if isApplyingInlineLinkAttributes { delegate?.blockCell(self, didEndEditingWithFullSelection: endedWithFullSelection); return }
-		if isApplyingInlineChecklistAttributes { delegate?.blockCell(self, didEndEditingWithFullSelection: endedWithFullSelection); return }
+		if isApplyingInlineTagAttributes { return }
+		if isApplyingInlineLinkAttributes { return }
+		if isApplyingInlineChecklistAttributes { return }
 		applyInlineChecklistAttributesIfNeeded(preservingSelection: textView.selectedRange)
 		applyInlineTagAttributesIfNeeded(preservingSelection: textView.selectedRange)
 		applyInlineLinkAttributesIfNeeded(preservingSelection: textView.selectedRange)
-        delegate?.blockCell(self, didEndEditingWithFullSelection: endedWithFullSelection)
-    }
-
-    /// Whether the entire selectable text of this block is currently selected
-    /// (for checkboxes, the hidden "[ ] " prefix is excluded).
-    private func isFullTextSelection() -> Bool {
-        let length = textView.attributedText.length
-        let sel = textView.selectedRange
-        let lower = style == .checkbox ? min(4, length) : 0
-        return sel.length > 0
-            && sel.location == lower
-            && sel.location + sel.length == length
-            && length > lower
     }
 
     func textViewDidChangeSelection(_ textView: UITextView) {

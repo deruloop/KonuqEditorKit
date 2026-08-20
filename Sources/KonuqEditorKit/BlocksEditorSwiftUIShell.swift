@@ -145,7 +145,9 @@ public struct BlocksEditorSwiftUIShellView: View {
 			autoFocusOnAppear: autoFocusOnAppear,
 			onLinkToNote: onLinkToNote,
 			onOpenURL: onOpenURL,
-			onInsertLocation: onInsertLocation
+			onInsertLocation: onInsertLocation,
+			onCopySelection: onCopySelection,
+			onCutSelection: onCutSelection
 		)
 		.tint(Color(uiColor: KonuqEditor.theme.accent))
 		.toolbar {
@@ -293,6 +295,8 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
 	var onLinkToNote: (() -> Void)?
 	var onOpenURL: ((URL) -> Void)?
 	var onInsertLocation: (() -> Void)?
+	var onCopySelection: (() -> Void)?
+	var onCutSelection: (() -> Void)?
 
     func makeUIViewController(context: Context) -> BlocksEditorViewController {
         let controller = BlocksEditorViewController()
@@ -306,15 +310,19 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
         controller.onBlocksChanged = { [weak coordinator = context.coordinator] snapshots in
             coordinator?.publishBlocks(snapshots)
         }
+        controller.onCopyShortcut = onCopySelection
+        controller.onCutShortcut = onCutSelection
         context.coordinator.attach(controller: controller)
         return controller
     }
-    
+
     func updateUIViewController(_ uiViewController: BlocksEditorViewController, context: Context) {
 		uiViewController.autoFocusOnAppear = autoFocusOnAppear
 		uiViewController.onLinkToNote = onLinkToNote
 		uiViewController.onOpenURL = onOpenURL
 		uiViewController.onInsertLocation = onInsertLocation
+		uiViewController.onCopyShortcut = onCopySelection
+		uiViewController.onCutShortcut = onCutSelection
 	}
     
     func makeCoordinator() -> Coordinator {
