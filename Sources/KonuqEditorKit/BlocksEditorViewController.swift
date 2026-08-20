@@ -1316,6 +1316,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	private enum FocusCursorPlacement {
 		case start
 		case end
+		case position(Int)
 	}
 
 	private func focusVisibleTextCell(blockId: String, cursor: FocusCursorPlacement = .end) -> Bool {
@@ -1332,11 +1333,28 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			isFirstBlock: row == 0
 		)
 		cell.textView.becomeFirstResponder()
-		switch cursor {
-		case .start:
-			cell.textView.selectedRange = NSRange(location: 0, length: 0)
-		case .end:
-			cell.textView.selectedRange = NSRange(location: cell.textView.attributedText.length, length: 0)
+		let length = cell.textView.attributedText.length
+		let target: NSRange = {
+			switch cursor {
+			case .start:
+				return NSRange(location: 0, length: 0)
+			case .end:
+				return NSRange(location: length, length: 0)
+			case .position(let location):
+				return NSRange(location: min(max(location, 0), length), length: 0)
+			}
+		}()
+		cell.textView.selectedRange = target
+		// Re-assert on the next tick: late passes (inline-attribute refresh, table
+		// updates) can silently push the caret to the end of the text. The checkbox
+		// prefix clamp still applies on top of this.
+		DispatchQueue.main.async { [weak cell] in
+			guard let cell, cell.blockId == blockId, cell.textView.isFirstResponder else { return }
+			let len = cell.textView.attributedText.length
+			let reasserted = NSRange(location: min(target.location, len), length: 0)
+			if cell.textView.selectedRange != reasserted {
+				cell.textView.selectedRange = reasserted
+			}
 		}
 		if textBlock.text.length == 0 {
 			cell.setInlineTypingModes(bold: persistentInlineBoldMode, italic: persistentInlineItalicMode)
@@ -1589,13 +1607,34 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
             normalizedAction = action
         }
         
+        // For a backspace-merge, the caret belongs at the junction point (end of the
+        // previous block's ORIGINAL text), not at the end of the merged text.
+        var mergeJunction: Int?
+        var mergePreviousId: String?
+        if normalizedAction == .delete,
+           currentText.length > 0,
+           let index = document.index(of: cell.blockId), index > 0 {
+            let previousId = document.order[index - 1]
+            if let previous = document.block(id: previousId),
+               case .text(let previousTextBlock) = previous.content {
+                mergePreviousId = previousId
+                mergeJunction = previousTextBlock.text.length
+            }
+        }
+
         let newId = keyboardHandler.handle(blockId: cell.blockId, action: normalizedAction)
         pendingFocusBlockId = newId ?? cell.blockId
-        // After an enter/split the caret belongs at the START of the new block
-        // (before any carried text), not at its end.
+        // The caret stays where the interaction happened: at the START of the new
+        // block after an enter/split, at the junction after a merge.
         switch normalizedAction {
         case .enterInside, .enterAtTheEnd, .enterForEmpty, .enterAtTheBegining:
             pendingFocusCursor = .start
+        case .delete:
+            if let mergeJunction, let mergePreviousId, newId == mergePreviousId {
+                pendingFocusCursor = .position(mergeJunction)
+            } else {
+                pendingFocusCursor = .end
+            }
         default:
             pendingFocusCursor = .end
         }
@@ -1611,8 +1650,9 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			}
 		}
 
-		if normalizedAction == .delete, let id = pendingFocusBlockId, focusVisibleTextCell(blockId: id) {
+		if normalizedAction == .delete, let id = pendingFocusBlockId, focusVisibleTextCell(blockId: id, cursor: pendingFocusCursor) {
 			pendingFocusBlockId = nil
+			pendingFocusCursor = .end
 		}
 
 		applyOrderChange(oldOrder: oldOrder) { [weak self] in
