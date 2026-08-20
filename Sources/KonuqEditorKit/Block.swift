@@ -1,5 +1,12 @@
 import Foundation
 
+/// Pasteboard identifiers used for lossless in-app block copy/paste. The plain-text
+/// (markdown) representation is written alongside for external apps.
+enum EditorClipboard {
+	static let blocksType = "com.konuq.editor.blocks.v1"
+	static let plainText = "public.utf8-plain-text"
+}
+
 public enum TextStyle: String, Equatable, Codable {
 	case text
 	case title

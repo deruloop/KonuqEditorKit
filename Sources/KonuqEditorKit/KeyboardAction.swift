@@ -88,6 +88,7 @@ private extension BeginingMarkdownShortcut {
         .init(text: ["## "], style: .description),
         .init(text: ["# "], style: .title),
         .init(text: ["``` "], style: .code),
+		.init(text: ["[ ] ", "[x] ", "[X] ", "- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] ", "* [X] "], style: .checkbox),
 		.init(text: ["* "], style: .checkbox),
         .init(text: ["- "], style: .listBullet),
         .init(text: ["> "], style: .toggle)

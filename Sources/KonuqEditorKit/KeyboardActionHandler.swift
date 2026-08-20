@@ -195,8 +195,16 @@ final class KeyboardActionHandler {
 			let after = textBlock.text.attributedSubstring(from: NSRange(location: end, length: total - end))
 
 			let newStyle = contentTypeForSplit(style: textBlock.style, blockId: info.id)
+			let canReplaceCurrent = before.length == 0 && after.length == 0
 
 			if parts.count == 1 {
+				// Pasting a single checkbox line into an empty block reconstructs it.
+				if canReplaceCurrent, let checkbox = checkboxAttributedText(for: parts[0]) {
+					var current = info
+					current.content = .text(TextBlock(text: checkbox, style: .checkbox))
+					document.setBlock(current)
+					return info.id
+				}
 				let updated = NSMutableAttributedString(attributedString: before)
 				updated.append(NSAttributedString(string: parts[0]))
 				updated.append(after)
@@ -206,25 +214,57 @@ final class KeyboardActionHandler {
 				return info.id
 			}
 
-			let updatedCurrent = NSMutableAttributedString(attributedString: before)
-			updatedCurrent.append(NSAttributedString(string: parts[0]))
-
-			var current = info
-			current.content = .text(TextBlock(text: updatedCurrent, style: textBlock.style))
-			document.setBlock(current)
+			// First line -> current block (as a checkbox when possible and the block is empty).
+			if canReplaceCurrent, let checkbox = checkboxAttributedText(for: parts[0]) {
+				var current = info
+				current.content = .text(TextBlock(text: checkbox, style: .checkbox))
+				document.setBlock(current)
+			} else {
+				let updatedCurrent = NSMutableAttributedString(attributedString: before)
+				updatedCurrent.append(NSAttributedString(string: parts[0]))
+				var current = info
+				current.content = .text(TextBlock(text: updatedCurrent, style: textBlock.style))
+				document.setBlock(current)
+			}
 
 			var previousId = info.id
 			for idx in 1..<parts.count {
-				let piece = NSMutableAttributedString(string: parts[idx])
-				if idx == parts.count - 1 {
-					piece.append(after)
+				let isLast = idx == parts.count - 1
+				let block: Block
+				if let checkbox = checkboxAttributedText(for: parts[idx]) {
+					let piece = NSMutableAttributedString(attributedString: checkbox)
+					if isLast { piece.append(after) }
+					block = Block(content: .text(TextBlock(text: piece, style: .checkbox)))
+				} else {
+					let piece = NSMutableAttributedString(string: parts[idx])
+					if isLast { piece.append(after) }
+					block = Block(content: .text(TextBlock(text: piece, style: newStyle)))
 				}
-				let block = Block(content: .text(TextBlock(text: piece, style: newStyle)))
 				let newId = service.add(block: block, targetBlockId: previousId, position: .bottom)
 				previousId = newId
 			}
 			return previousId
         }
+    }
+
+    /// Recognise a pasted markdown checkbox line ("- [ ] x", "* [x] x", "[ ] x", …)
+    /// and return the editor's internal checkbox text ("[ ] x" / "[x] x"), or nil.
+    private func checkboxAttributedText(for line: String) -> NSAttributedString? {
+        var s = line
+        if s.hasPrefix("- ") || s.hasPrefix("* ") {
+            s = String(s.dropFirst(2))
+        }
+        let lower = s.lowercased()
+        let checked: Bool
+        if lower.hasPrefix("[ ] ") {
+            checked = false
+        } else if lower.hasPrefix("[x] ") {
+            checked = true
+        } else {
+            return nil
+        }
+        let rest = String(s.dropFirst(4))
+        return NSAttributedString(string: (checked ? "[x] " : "[ ] ") + rest)
     }
     
     private func isList(style: TextStyle) -> Bool {

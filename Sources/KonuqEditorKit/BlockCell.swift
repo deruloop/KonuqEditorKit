@@ -66,6 +66,20 @@ final class BlocksEditorTextView: UITextView {
 		return commands
 	}
 
+	override func paste(_ sender: Any?) {
+		let pb = UIPasteboard.general
+		// Structured block paste (lossless) takes priority over the plain-text form.
+		if pb.contains(pasteboardTypes: [EditorClipboard.blocksType]),
+		   let data = pb.data(forPasteboardType: EditorClipboard.blocksType),
+		   let snapshots = try? JSONDecoder().decode([EditorBlockSnapshot].self, from: data),
+		   !snapshots.isEmpty,
+		   let cell = ownerCell {
+			cell.delegate?.blockCell(cell, didPasteBlocks: snapshots)
+			return
+		}
+		super.paste(sender)
+	}
+
 	@objc private func handleCommandBold() { ownerCell?.toggleBold() }
 	@objc private func handleCommandItalic() { ownerCell?.toggleItalic() }
 	@objc private func handleCommandMakeTextBlock() { ownerCell?.applyBlockStyleCommand(.text) }
@@ -125,7 +139,10 @@ enum KeyboardTrailingButtonMode {
 protocol BlockCellDelegate: AnyObject {
     func blockCell(_ cell: BlockCell, didChangeText text: NSAttributedString)
     func blockCell(_ cell: BlockCell, didTrigger action: KeyboardAction)
+    func blockCell(_ cell: BlockCell, didPasteBlocks snapshots: [EditorBlockSnapshot])
 	func blockCell(_ cell: BlockCell, didTapURL url: URL)
+	func blockCellDidBeginEditing(_ cell: BlockCell)
+	func blockCell(_ cell: BlockCell, didEndEditingWithFullSelection isFull: Bool)
 	func blockCell(_ cell: BlockCell, didChangeInlineTypingModeBold isBold: Bool, italic isItalic: Bool)
 	func blockCell(_ cell: BlockCell, didRequestMoveFocus direction: BlockFocusMoveDirection)
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode { get }
@@ -340,6 +357,20 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 				guard let self else { return }
 				guard self.style != .code else { return }
 				let current = self.textView.attributedText ?? NSAttributedString(string: "")
+				// Toggle: tapping the checkbox button on an existing checkbox reverts it
+				// to a plain text block (stripping the hidden "[ ] "/"[x] " prefix).
+				if self.style == .checkbox {
+					let stripped = NSMutableAttributedString(attributedString: current)
+					let ns = stripped.string as NSString
+					if ns.length >= 4 {
+						let prefix = ns.substring(with: NSRange(location: 0, length: 4)).lowercased()
+						if prefix == "[ ] " || prefix == "[x] " {
+							stripped.deleteCharacters(in: NSRange(location: 0, length: 4))
+						}
+					}
+					self.delegate?.blockCell(self, didTrigger: .markdownTurnInto(style: .text, text: stripped))
+					return
+				}
 				let updated = NSMutableAttributedString(attributedString: current)
 				let ns = updated.string as NSString
 				if ns.length < 4 || !(ns.hasPrefix("[ ] ") || ns.substring(with: NSRange(location: 0, length: 4)).lowercased() == "[x] ") {
@@ -478,6 +509,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     }
 
     func textViewDidBeginEditing(_ textView: UITextView) {
+        delegate?.blockCellDidBeginEditing(self)
         updateKeyboardAccessoryState()
         if let keyboardAccessoryView {
             textView.inputAccessoryView = keyboardAccessoryView
@@ -495,15 +527,32 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
+        // Captured before the inline-attribute passes below may adjust the selection.
+        // Used to auto-switch to block selection when the user had a whole block
+        // selected and then moved to another row.
+        let endedWithFullSelection = isFullTextSelection()
         if let keyboardAccessoryView {
             textView.inputAccessoryView = nil
         }
-		if isApplyingInlineTagAttributes { return }
-		if isApplyingInlineLinkAttributes { return }
-		if isApplyingInlineChecklistAttributes { return }
+		if isApplyingInlineTagAttributes { delegate?.blockCell(self, didEndEditingWithFullSelection: endedWithFullSelection); return }
+		if isApplyingInlineLinkAttributes { delegate?.blockCell(self, didEndEditingWithFullSelection: endedWithFullSelection); return }
+		if isApplyingInlineChecklistAttributes { delegate?.blockCell(self, didEndEditingWithFullSelection: endedWithFullSelection); return }
 		applyInlineChecklistAttributesIfNeeded(preservingSelection: textView.selectedRange)
 		applyInlineTagAttributesIfNeeded(preservingSelection: textView.selectedRange)
 		applyInlineLinkAttributesIfNeeded(preservingSelection: textView.selectedRange)
+        delegate?.blockCell(self, didEndEditingWithFullSelection: endedWithFullSelection)
+    }
+
+    /// Whether the entire selectable text of this block is currently selected
+    /// (for checkboxes, the hidden "[ ] " prefix is excluded).
+    private func isFullTextSelection() -> Bool {
+        let length = textView.attributedText.length
+        let sel = textView.selectedRange
+        let lower = style == .checkbox ? min(4, length) : 0
+        return sel.length > 0
+            && sel.location == lower
+            && sel.location + sel.length == length
+            && length > lower
     }
 
     func textViewDidChangeSelection(_ textView: UITextView) {
@@ -515,8 +564,14 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		if isApplyingBaseTextAttributes { return }
 		if style == .checkbox {
 			let length = textView.attributedText.length
-			let clamped = NSRange(location: min(max(textView.selectedRange.location, 4), length), length: 0)
-			if textView.selectedRange != clamped {
+			// Keep the selection out of the hidden "[ ] " prefix (first 4 chars) but
+			// PRESERVE its length — collapsing to length 0 here would kill double-tap
+			// word selection and drag selection inside the checkbox text.
+			let sel = textView.selectedRange
+			let start = min(max(sel.location, 4), length)
+			let end = min(max(sel.location + sel.length, 4), length)
+			let clamped = NSRange(location: start, length: max(0, end - start))
+			if sel != clamped {
 				textView.selectedRange = clamped
 				return
 			}
@@ -813,9 +868,16 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		}
 
 		if style == .checkbox {
-			textView.becomeFirstResponder()
-			let end = NSRange(location: textView.attributedText.length, length: 0)
-			textView.selectedRange = end
+			if textView.isFirstResponder == false {
+				textView.becomeFirstResponder()
+			}
+			// Place the caret where tapped (never in the hidden prefix), but don't
+			// disturb an active selection — otherwise a double-tap word selection is
+			// collapsed the instant the single-tap recognizer fires.
+			if textView.selectedRange.length == 0 {
+				let target = min(max(index, 4), textView.attributedText.length)
+				textView.selectedRange = NSRange(location: target, length: 0)
+			}
 			updateKeyboardAccessoryState()
 		}
 	}

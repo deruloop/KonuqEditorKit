@@ -29,6 +29,11 @@ public final class BlocksEditorShellModel: ObservableObject {
     fileprivate weak var controller: BlocksEditorViewController?
     private var pendingSetBlocks: [EditorBlockSnapshot]?
 
+    /// Invoked when the user manually edits the dictation target block mid-recording.
+    public var onDictationInterrupted: (() -> Void)? {
+        didSet { controller?.onDictationInterrupted = onDictationInterrupted }
+    }
+
     public init() {}
 
     public func done() {
@@ -328,6 +333,7 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
         func attach(controller: BlocksEditorViewController) {
             self.controller = controller
             model.controller = controller
+            controller.onDictationInterrupted = model.onDictationInterrupted
             if let pending = model.consumePendingSetBlocks() {
                 controller.setBlocks(pending)
             }

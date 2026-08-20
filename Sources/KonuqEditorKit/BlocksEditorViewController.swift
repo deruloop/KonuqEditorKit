@@ -1,4 +1,5 @@
 import UIKit
+import QuartzCore
 import AVKit
 import Photos
 import PhotosUI
@@ -31,6 +32,38 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	private var keyboardObservers: [NSObjectProtocol] = []
     var autoFocusOnAppear: Bool = true
     private var isSelectionMode = false
+    /// Tracks a block whose full text was just selected, so moving focus to another
+    /// row can auto-switch into multi-block selection.
+    private var pendingFullSelectionBlockId: String?
+    private var pendingFullSelectionTime: CFTimeInterval = 0
+
+    /// Dedicated undo manager for block-level operations (delete/restore). Text
+    /// editing keeps using each UITextView's own undo manager; this one is active
+    /// while the controller is first responder (i.e. in block-selection mode).
+    private let blockUndoManager = UndoManager()
+    override var undoManager: UndoManager? { blockUndoManager }
+    override var canBecomeFirstResponder: Bool { true }
+
+    override var keyCommands: [UIKeyCommand]? {
+        guard isSelectionMode else { return nil }
+        let copy = UIKeyCommand(input: "c", modifierFlags: .command, action: #selector(handleSelectionCopyCommand))
+        let cut = UIKeyCommand(input: "x", modifierFlags: .command, action: #selector(handleSelectionCutCommand))
+        let del = UIKeyCommand(input: "\u{8}", modifierFlags: .command, action: #selector(handleSelectionDeleteCommand))
+        let selectAll = UIKeyCommand(input: "a", modifierFlags: .command, action: #selector(handleSelectionSelectAllCommand))
+        let undo = UIKeyCommand(input: "z", modifierFlags: .command, action: #selector(handleUndoCommand))
+        let redo = UIKeyCommand(input: "z", modifierFlags: [.command, .shift], action: #selector(handleRedoCommand))
+        for command in [copy, cut, del, selectAll, undo, redo] {
+            if #available(iOS 15.0, *) { command.wantsPriorityOverSystemBehavior = true }
+        }
+        return [copy, cut, del, selectAll, undo, redo]
+    }
+
+    @objc private func handleSelectionCopyCommand() { copySelectedBlocksToPasteboard() }
+    @objc private func handleSelectionCutCommand() { cutSelectedBlocksToPasteboard() }
+    @objc private func handleSelectionDeleteCommand() { deleteSelectedBlocks() }
+    @objc private func handleSelectionSelectAllCommand() { selectAllBlocks() }
+    @objc private func handleUndoCommand() { blockUndoManager.undo() }
+    @objc private func handleRedoCommand() { blockUndoManager.redo() }
 	private var blocksChangedWorkItem: DispatchWorkItem?
 	private var keyboardHeight: CGFloat = 0
 	private var dictationTargetBlockId: String?
@@ -44,6 +77,9 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	var onLinkToNote: (() -> Void)?
 	var onOpenURL: ((URL) -> Void)?
 	var onInsertLocation: (() -> Void)?
+	/// Fired when the user manually edits the dictation target block mid-recording,
+	/// so the speech controller can reset its cumulative transcript.
+	var onDictationInterrupted: (() -> Void)?
 
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode {
 		if onLinkToNote != nil { return .linkToNote }
@@ -253,6 +289,13 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		for cell in tableView.visibleCells {
 			(cell as? BlockSelectableCell)?.isSelectionMode = enabled
 		}
+        // Become first responder so ⌘C / ⌘⌫ / ⌘Z reach this controller in
+        // selection mode (no text view is editing then).
+        if enabled {
+            becomeFirstResponder()
+        } else {
+            resignFirstResponder()
+        }
         notifySelectionState()
     }
 
@@ -474,10 +517,19 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			return
 		}
 
-		if dictationTargetBlockId != cell.blockId {
+		if dictationTargetBlockId == nil {
 			dictationTargetBlockId = cell.blockId
 			dictationPrefix = textView.attributedText
 			dictationRange = nil
+		} else if dictationTargetBlockId != cell.blockId {
+			// Focus moved to a different block mid-dictation (e.g. the user pressed
+			// return or tapped elsewhere). Drop this stale cumulative result and reset
+			// the transcript so speech resumes cleanly on the new block.
+			dictationTargetBlockId = cell.blockId
+			dictationPrefix = textView.attributedText
+			dictationRange = nil
+			onDictationInterrupted?()
+			return
 		}
 
 		let prefix = dictationPrefix ?? NSAttributedString(string: "")
@@ -546,9 +598,18 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     
     func deleteSelectedBlocks() {
         guard let indexPaths = tableView.indexPathsForSelectedRows, !indexPaths.isEmpty else { return }
-        let ids = indexPaths.map { document.order[$0.row] }
+        let removed: [RemovedBlock] = indexPaths
+            .map { $0.row }
+            .sorted()
+            .compactMap { row in
+                guard row >= 0, row < document.order.count else { return nil }
+                guard let block = document.block(id: document.order[row]) else { return nil }
+                return RemovedBlock(block: block, index: row)
+            }
+        let ids = removed.map { $0.block.id }
+        registerRestoreUndo(for: removed)
         document.remove(blockIds: ids)
-        
+
         if document.order.isEmpty {
 			let initial = Block(content: .text(TextBlock(text: NSAttributedString(string: ""), style: initialEmptyStyle)))
             document.setBlock(initial)
@@ -564,6 +625,58 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		scheduleBlocksChanged(immediate: true)
         notifySelectionState()
     }
+
+	private struct RemovedBlock {
+		let block: Block
+		let index: Int
+	}
+
+	private func registerRestoreUndo(for removed: [RemovedBlock]) {
+		guard !removed.isEmpty else { return }
+		blockUndoManager.registerUndo(withTarget: self) { target in
+			target.restoreRemovedBlocks(removed)
+		}
+		blockUndoManager.setActionName("Delete")
+	}
+
+	private func restoreRemovedBlocks(_ removed: [RemovedBlock]) {
+		// Delete-all inserts a single empty placeholder block; drop it before restoring.
+		if document.order.count == 1,
+		   let onlyId = document.order.first,
+		   removed.contains(where: { $0.block.id == onlyId }) == false,
+		   isEmptyTextBlock(onlyId) {
+			document.remove(blockId: onlyId)
+		}
+		for entry in removed.sorted(by: { $0.index < $1.index }) {
+			let clamped = min(max(entry.index, 0), document.order.count)
+			_ = document.insert(entry.block, at: clamped)
+		}
+		blockUndoManager.registerUndo(withTarget: self) { target in
+			target.reDeleteBlocks(removed)
+		}
+		tableView.reloadData()
+		scheduleBlocksChanged(immediate: true)
+		if isSelectionMode { notifySelectionState() }
+	}
+
+	private func reDeleteBlocks(_ removed: [RemovedBlock]) {
+		document.remove(blockIds: removed.map { $0.block.id })
+		if document.order.isEmpty {
+			let initial = Block(content: .text(TextBlock(text: NSAttributedString(string: ""), style: initialEmptyStyle)))
+			document.setBlock(initial)
+		}
+		blockUndoManager.registerUndo(withTarget: self) { target in
+			target.restoreRemovedBlocks(removed)
+		}
+		tableView.reloadData()
+		scheduleBlocksChanged(immediate: true)
+		if isSelectionMode { notifySelectionState() }
+	}
+
+	private func isEmptyTextBlock(_ id: String) -> Bool {
+		guard let block = document.block(id: id), case let .text(textBlock) = block.content else { return false }
+		return textBlock.text.length == 0
+	}
 
 	func selectedBlockSnapshots() -> [EditorBlockSnapshot] {
 		guard let indexPaths = tableView.indexPathsForSelectedRows, !indexPaths.isEmpty else { return [] }
@@ -605,7 +718,19 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	func copySelectedBlocksToPasteboard() {
 		let snapshots = selectedBlockSnapshots()
 		guard !snapshots.isEmpty else { return }
-		UIPasteboard.general.string = makeMarkdown(from: snapshots)
+		writeSnapshotsToPasteboard(snapshots)
+	}
+
+	/// Write BOTH a structured (lossless) block representation and a plain markdown
+	/// string. Internal paste uses the structured form to rebuild blocks exactly
+	/// (checkbox state, inline bold/italic/strike); external apps get the markdown.
+	private func writeSnapshotsToPasteboard(_ snapshots: [EditorBlockSnapshot]) {
+		let markdown = makeMarkdown(from: snapshots)
+		var item: [String: Any] = [EditorClipboard.plainText: markdown]
+		if let data = try? JSONEncoder().encode(snapshots) {
+			item[EditorClipboard.blocksType] = data
+		}
+		UIPasteboard.general.setItems([item], options: [:])
 	}
 
 	func cutSelectedBlocksToPasteboard() {
@@ -614,6 +739,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	}
     
     func setBlocks(_ snapshots: [EditorBlockSnapshot]) {
+        blockUndoManager.removeAllActions()
         let sorted = snapshots.sorted { a, b in
             if a.position != b.position { return a.position < b.position }
             return a.id < b.id
@@ -1304,10 +1430,58 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         tableView.beginUpdates()
         tableView.endUpdates()
 		scheduleBlocksChanged()
+		// Dictation updates text programmatically (no delegate callback), so this
+		// firing on the dictation target means the user edited by hand: re-baseline
+		// the prefix and reset the transcript so old speech isn't re-inserted.
+		if cell.blockId == dictationTargetBlockId {
+			dictationPrefix = text
+			dictationRange = nil
+			onDictationInterrupted?()
+		}
     }
 
 	func blockCell(_ cell: BlockCell, didTapURL url: URL) {
 		onOpenURL?(url)
+	}
+
+	func blockCellDidBeginEditing(_ cell: BlockCell) {
+		guard let pending = pendingFullSelectionBlockId else { return }
+		let elapsed = CACurrentMediaTime() - pendingFullSelectionTime
+		pendingFullSelectionBlockId = nil
+		// The user selected a whole block's text and then moved to another row within
+		// a beat — treat it as intent to select blocks (not edit), and switch to
+		// multi-block selection with both rows, instead of requiring a long-press.
+		guard elapsed < 1.0, pending != cell.blockId else { return }
+		guard let firstRow = document.order.firstIndex(of: pending),
+			  let secondRow = document.order.firstIndex(of: cell.blockId) else { return }
+		tableView.endEditing(true)
+		setSelectionMode(true)
+		reselect([
+			IndexPath(row: firstRow, section: 0),
+			IndexPath(row: secondRow, section: 0)
+		])
+		UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+	}
+
+	func blockCell(_ cell: BlockCell, didEndEditingWithFullSelection isFull: Bool) {
+		if isFull {
+			pendingFullSelectionBlockId = cell.blockId
+			pendingFullSelectionTime = CACurrentMediaTime()
+		} else if pendingFullSelectionBlockId == cell.blockId {
+			pendingFullSelectionBlockId = nil
+		}
+	}
+
+	func blockCell(_ cell: BlockCell, didPasteBlocks snapshots: [EditorBlockSnapshot]) {
+		guard isSelectionMode == false, !snapshots.isEmpty else { return }
+		// Fresh ids so pasting within the same note can't collide with existing blocks.
+		let reIded = snapshots
+			.sorted { $0.position < $1.position }
+			.enumerated()
+			.map { index, snapshot in
+				EditorBlockSnapshot(id: UUID().uuidString, kind: snapshot.kind, parentId: nil, position: index)
+			}
+		insertBlocksAtCursor(reIded)
 	}
 
 	func blockCell(_ cell: BlockCell, didChangeInlineTypingModeBold isBold: Bool, italic isItalic: Bool) {
