@@ -1559,12 +1559,23 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		let oldOrder = document.order
         
         let currentRange = cell.textView.selectedRange
+        let textLength = currentText.length
+        // For enter actions keep the range the keypress reported (clamped): it is
+        // authoritative for where the split must happen. Re-reading selectedRange
+        // here could pick up a caret silently moved by the checkbox/inline-attribute
+        // machinery, splitting at the wrong spot (e.g. at the end — dropping the
+        // text that should carry into the new block).
+        func clamped(_ range: NSRange) -> NSRange {
+            let location = max(0, min(range.location, textLength))
+            let length = max(0, min(range.length, textLength - location))
+            return NSRange(location: location, length: length)
+        }
         let normalizedAction: KeyboardAction
         switch action {
-        case .enterInside(let string, _):
-            normalizedAction = .enterInside(string: string, range: currentRange)
-        case .enterAtTheEnd(let string, _):
-            normalizedAction = .enterAtTheEnd(string: string, range: currentRange)
+        case .enterInside(let string, let range):
+            normalizedAction = .enterInside(string: string, range: clamped(range))
+        case .enterAtTheEnd(let string, let range):
+            normalizedAction = .enterAtTheEnd(string: string, range: clamped(range))
 		case .pasteMultiline(let text, _):
 			normalizedAction = .pasteMultiline(text: text, range: currentRange)
         default:
