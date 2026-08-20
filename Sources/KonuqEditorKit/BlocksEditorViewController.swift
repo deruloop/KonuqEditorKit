@@ -1333,20 +1333,9 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			isFirstBlock: row == 0
 		)
 		cell.textView.becomeFirstResponder()
-		let length = cell.textView.attributedText.length
-		let target: NSRange = {
-			switch cursor {
-			case .start:
-				return NSRange(location: 0, length: 0)
-			case .end:
-				return NSRange(location: length, length: 0)
-			case .position(let location):
-				return NSRange(location: min(max(location, 0), length), length: 0)
-			}
-		}()
 		// Enforced for a short window: anything that tries to push the caret back to
 		// the end (UIKit focus restoration, inline-attribute passes) gets corrected.
-		cell.enforceSelection(target)
+		placeCaret(cursor, in: cell)
 		if textBlock.text.length == 0 {
 			cell.setInlineTypingModes(bold: persistentInlineBoldMode, italic: persistentInlineItalicMode)
 		}
@@ -1461,6 +1450,11 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		guard let block = document.block(id: targetId), case .text(let textBlock) = block.content else { return }
 
 		pendingFocusBlockId = nil
+		// Consume the pending cursor too: this path races focusIfNeeded (it fires
+		// during the batch insert) and used to hardcode the caret to the end,
+		// overriding the split's caret placement.
+		let cursor = pendingFocusCursor
+		pendingFocusCursor = .end
 		blockCell.configure(
 			blockId: targetId,
 			text: textBlock.text,
@@ -1468,8 +1462,22 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			isFirstBlock: indexPath.row == 0
 		)
 		blockCell.textView.becomeFirstResponder()
-		let end = NSRange(location: blockCell.textView.attributedText.length, length: 0)
-		blockCell.textView.selectedRange = end
+		placeCaret(cursor, in: blockCell)
+	}
+
+	private func placeCaret(_ cursor: FocusCursorPlacement, in cell: BlockCell) {
+		let length = cell.textView.attributedText.length
+		let target: NSRange = {
+			switch cursor {
+			case .start:
+				return NSRange(location: 0, length: 0)
+			case .end:
+				return NSRange(location: length, length: 0)
+			case .position(let location):
+				return NSRange(location: min(max(location, 0), length), length: 0)
+			}
+		}()
+		cell.enforceSelection(target)
 	}
     
     func blockCell(_ cell: BlockCell, didChangeText text: NSAttributedString) {
