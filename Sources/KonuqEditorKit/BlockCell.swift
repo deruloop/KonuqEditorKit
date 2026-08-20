@@ -434,6 +434,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     }
     
     func configure(blockId: String, text: NSAttributedString, style: TextStyle, isFirstBlock: Bool) {
+        if self.blockId != blockId { clearEnforcedSelection() }
         self.blockId = blockId
         self.style = style
         self.isFirstBlock = isFirstBlock
@@ -535,9 +536,40 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		applyInlineLinkAttributesIfNeeded(preservingSelection: textView.selectedRange)
     }
 
+	/// Selection enforced for a short window after a programmatic caret placement
+	/// (split/merge focus). Any selection change in the window — UIKit's async caret
+	/// restoration on focus, inline-attribute passes, table updates — is corrected
+	/// back to the target, because every change lands in textViewDidChangeSelection.
+	private var enforcedSelection: NSRange?
+	private var enforcedSelectionDeadline: CFTimeInterval = 0
+
+	func enforceSelection(_ range: NSRange, for duration: TimeInterval = 0.35) {
+		let length = textView.attributedText.length
+		var location = min(max(range.location, 0), length)
+		if style == .checkbox { location = max(location, min(4, length)) }
+		let target = NSRange(location: location, length: 0)
+		enforcedSelection = target
+		enforcedSelectionDeadline = CACurrentMediaTime() + duration
+		textView.selectedRange = target
+	}
+
+	private func clearEnforcedSelection() {
+		enforcedSelection = nil
+	}
+
     func textViewDidChangeSelection(_ textView: UITextView) {
         if style == .code { return }
         if isSelectionMode { return }
+		if let enforced = enforcedSelection {
+			if CACurrentMediaTime() < enforcedSelectionDeadline {
+				if textView.selectedRange != enforced {
+					textView.selectedRange = enforced
+					return
+				}
+			} else {
+				enforcedSelection = nil
+			}
+		}
 		if isApplyingInlineChecklistAttributes { return }
 		if isApplyingInlineTagAttributes { return }
 		if isApplyingInlineLinkAttributes { return }
@@ -648,6 +680,8 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
         shouldChangeTextIn range: NSRange,
         replacementText text: String
     ) -> Bool {
+		// Real user input lifts any programmatic caret enforcement immediately.
+		clearEnforcedSelection()
 		if isDividerBlock() {
 			if text == "\n" {
 				delegate?.blockCell(self, didTrigger: .enterAtTheEnd(string: textView.attributedText, range: range))
@@ -706,7 +740,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 					}
 					style = .text
 					textView.attributedText = cleaned
-					textView.selectedRange = NSRange(location: 0, length: 0)
+					enforceSelection(NSRange(location: 0, length: 0))
 					let baseFont = textView.font ?? UIFont.preferredFont(forTextStyle: .body)
 					var typing = textView.typingAttributes
 					typing[.font] = baseFont
@@ -899,6 +933,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 	private func didTapCheckbox() {
 		guard isSelectionMode == false else { return }
 		guard style == .checkbox else { return }
+		clearEnforcedSelection()
 
 		let current = textView.attributedText ?? NSAttributedString(string: "")
 		let updated = NSMutableAttributedString(attributedString: current)

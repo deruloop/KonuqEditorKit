@@ -1344,18 +1344,9 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 				return NSRange(location: min(max(location, 0), length), length: 0)
 			}
 		}()
-		cell.textView.selectedRange = target
-		// Re-assert on the next tick: late passes (inline-attribute refresh, table
-		// updates) can silently push the caret to the end of the text. The checkbox
-		// prefix clamp still applies on top of this.
-		DispatchQueue.main.async { [weak cell] in
-			guard let cell, cell.blockId == blockId, cell.textView.isFirstResponder else { return }
-			let len = cell.textView.attributedText.length
-			let reasserted = NSRange(location: min(target.location, len), length: 0)
-			if cell.textView.selectedRange != reasserted {
-				cell.textView.selectedRange = reasserted
-			}
-		}
+		// Enforced for a short window: anything that tries to push the caret back to
+		// the end (UIKit focus restoration, inline-attribute passes) gets corrected.
+		cell.enforceSelection(target)
 		if textBlock.text.length == 0 {
 			cell.setInlineTypingModes(bold: persistentInlineBoldMode, italic: persistentInlineItalicMode)
 		}
