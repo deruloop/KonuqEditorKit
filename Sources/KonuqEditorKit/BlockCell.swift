@@ -685,6 +685,39 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 					updateDividerVisibility()
 					updateKeyboardAccessoryState()
 					delegate?.blockCell(self, didTrigger: .markdownTurnInto(style: .text, text: NSAttributedString(string: "")))
+				} else {
+					// Backspace at the visible start of a checkbox with content:
+					// remove the checkbox and demote the block to plain text.
+					let remainderAttr = textView.attributedText.attributedSubstring(
+						from: NSRange(location: prefixLen, length: full.length - prefixLen)
+					)
+					let cleaned = NSMutableAttributedString(attributedString: remainderAttr)
+					let fullRange = NSRange(location: 0, length: cleaned.length)
+					// Match the sanitize in configure() so the follow-up reconfigure
+					// sees identical text and leaves the caret alone.
+					cleaned.removeAttribute(.foregroundColor, range: fullRange)
+					cleaned.removeAttribute(.appInlineCheckboxHidden, range: fullRange)
+					cleaned.removeAttribute(.appInlineCheckboxDimmed, range: fullRange)
+					cleaned.enumerateAttribute(.appInlineCheckboxAutoStrike, in: fullRange, options: []) { value, r, _ in
+						if value != nil {
+							cleaned.removeAttribute(.strikethroughStyle, range: r)
+							cleaned.removeAttribute(.appInlineCheckboxAutoStrike, range: r)
+						}
+					}
+					style = .text
+					textView.attributedText = cleaned
+					textView.selectedRange = NSRange(location: 0, length: 0)
+					let baseFont = textView.font ?? UIFont.preferredFont(forTextStyle: .body)
+					var typing = textView.typingAttributes
+					typing[.font] = baseFont
+					typing.removeValue(forKey: .foregroundColor)
+					textView.typingAttributes = typing
+					applyStyle()
+					lastTextWasEmpty = false
+					updatePlaceholderVisibility()
+					updateDividerVisibility()
+					updateKeyboardAccessoryState()
+					delegate?.blockCell(self, didTrigger: .markdownTurnInto(style: .text, text: cleaned))
 				}
 				return false
 			}

@@ -24,6 +24,9 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     private lazy var keyboardHandler = KeyboardActionHandler(document: document, service: service, toggleStorage: toggleStorage)
     
     private var pendingFocusBlockId: String?
+    /// Caret placement used when pendingFocusBlockId is focused. Enter/split sets
+    /// .start so the caret sits before the carried text; everything else keeps .end.
+    private var pendingFocusCursor: FocusCursorPlacement = .end
 	private var pendingMediaInsertAfterBlockId: String?
 	private var pendingFullScreenImageReference: String?
 	private var pendingFullScreenImageAttempts = 0
@@ -1288,21 +1291,25 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     
     private func focusIfNeeded() {
         guard let id = pendingFocusBlockId else { return }
-		if focusVisibleTextCell(blockId: id) {
+        let cursor = pendingFocusCursor
+		if focusVisibleTextCell(blockId: id, cursor: cursor) {
 			pendingFocusBlockId = nil
+			pendingFocusCursor = .end
 			return
 		}
 
 		guard let row = document.order.firstIndex(of: id) else {
 			pendingFocusBlockId = nil
+			pendingFocusCursor = .end
 			return
 		}
 		let indexPath = IndexPath(row: row, section: 0)
 		tableView.scrollToRow(at: indexPath, at: .middle, animated: false)
 		tableView.layoutIfNeeded()
 
-		if focusVisibleTextCell(blockId: id) {
+		if focusVisibleTextCell(blockId: id, cursor: cursor) {
 			pendingFocusBlockId = nil
+			pendingFocusCursor = .end
 		}
     }
 
@@ -1584,6 +1591,14 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         
         let newId = keyboardHandler.handle(blockId: cell.blockId, action: normalizedAction)
         pendingFocusBlockId = newId ?? cell.blockId
+        // After an enter/split the caret belongs at the START of the new block
+        // (before any carried text), not at its end.
+        switch normalizedAction {
+        case .enterInside, .enterAtTheEnd, .enterForEmpty, .enterAtTheBegining:
+            pendingFocusCursor = .start
+        default:
+            pendingFocusCursor = .end
+        }
 
 		if let updated = document.block(id: cell.blockId), case .text(let updatedTextBlock) = updated.content {
 			if let row = document.order.firstIndex(of: cell.blockId) {
