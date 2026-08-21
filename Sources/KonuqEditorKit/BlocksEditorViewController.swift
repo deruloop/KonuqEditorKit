@@ -481,6 +481,15 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		if let focusId = lastInsertedTextId ?? previousId, let row = document.order.firstIndex(of: focusId) {
 			tableView.scrollToRow(at: IndexPath(row: row, section: 0), at: .middle, animated: true)
 		}
+		// Refocus the editor: we resigned the first responder above, and without this
+		// the keyboard stays dismissed after a paste. Caret at the end of the last
+		// pasted text block.
+		if let focusId = lastInsertedTextId {
+			pendingFocusBlockId = focusId
+			pendingFocusCursor = .end
+			tableView.layoutIfNeeded()
+			focusIfNeeded()
+		}
 	}
 
 	private func block(from snapshot: EditorBlockSnapshot) -> Block {
@@ -1931,6 +1940,45 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		focusIfNeeded()
 	}
 
+	/// External image drop (Finder / Photos / another app): persist each image into
+	/// the media directory and insert it as an image block at the drop position —
+	/// the same storage the media picker uses, so sync/publish just work.
+	private func performExternalImageDrop(coordinator: UITableViewDropCoordinator) {
+		let destinationRow = coordinator.destinationIndexPath?.row ?? document.order.count
+		var offset = 0
+		for item in coordinator.items {
+			let provider = item.dragItem.itemProvider
+			let isImage = provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+				|| provider.canLoadObject(ofClass: UIImage.self)
+			guard isImage else { continue }
+			let insertRow = destinationRow + offset
+			offset += 1
+			provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { [weak self] url, _ in
+				// Read within the callback: the temp file dies when it returns.
+				if let url, let data = try? Data(contentsOf: url) {
+					DispatchQueue.main.async { self?.insertDroppedImageData(data, at: insertRow) }
+					return
+				}
+				// Sources that vend a UIImage object instead of a file (e.g. Photos).
+				guard provider.canLoadObject(ofClass: UIImage.self) else { return }
+				provider.loadObject(ofClass: UIImage.self) { object, _ in
+					guard let image = object as? UIImage,
+						  let jpeg = image.jpegData(compressionQuality: 0.92) else { return }
+					DispatchQueue.main.async { self?.insertDroppedImageData(jpeg, at: insertRow) }
+				}
+			}
+		}
+	}
+
+	private func insertDroppedImageData(_ data: Data, at row: Int) {
+		guard let reference = persistPickedImageData(data: data) else { return }
+		let media = Block(content: .media(MediaBlock(kind: .image, reference: reference, displayStyle: .medium)))
+		let clamped = max(0, min(row, document.order.count))
+		_ = document.insert(media, at: clamped)
+		tableView.reloadData()
+		scheduleBlocksChanged(immediate: true)
+	}
+
 	private func persistPickedFile(sourceUrl: URL, defaultExtension: String) -> String {
 		let mediaDir = MediaReferenceResolver.mediaDirectory()
 		let ext = sourceUrl.pathExtension.isEmpty ? defaultExtension : sourceUrl.pathExtension
@@ -2039,6 +2087,14 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     }
     
     func tableView(_ tableView: UITableView, dropSessionDidUpdate session: UIDropSession, withDestinationIndexPath destinationIndexPath: IndexPath?) -> UITableViewDropProposal {
+        // External drags (Finder, Photos, another app): accept images as a copy —
+        // they become image blocks at the drop position.
+        if session.localDragSession == nil {
+            guard session.canLoadObjects(ofClass: UIImage.self) else {
+                return UITableViewDropProposal(operation: .cancel)
+            }
+            return UITableViewDropProposal(operation: .copy, intent: .insertAtDestinationIndexPath)
+        }
         guard let indexPath = destinationIndexPath,
               let cell = tableView.cellForRow(at: indexPath) else {
             return UITableViewDropProposal(operation: .move, intent: .insertAtDestinationIndexPath)
@@ -2053,6 +2109,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     }
     
     func tableView(_ tableView: UITableView, performDropWith coordinator: UITableViewDropCoordinator) {
+        if coordinator.proposal.operation == .copy {
+            performExternalImageDrop(coordinator: coordinator)
+            return
+        }
         guard coordinator.proposal.operation == .move else { return }
         guard !document.order.isEmpty else { return }
         let destinationIndexPath = coordinator.destinationIndexPath ?? IndexPath(row: document.order.count - 1, section: 0)
