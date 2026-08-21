@@ -168,6 +168,10 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     private let stack = UIStackView()
     private var prefixWidthConstraint: NSLayoutConstraint?
 	private var prefixHeightConstraint: NSLayoutConstraint?
+	/// Active only for checkbox blocks: pins the prefix container's height to the
+	/// text's first line height, so the square centers on the first line of text
+	/// (without it the container height is ambiguous and the square drifts).
+	private var checkboxLineHeightConstraint: NSLayoutConstraint?
     private var minTextViewHeightConstraint: NSLayoutConstraint?
     let textView = BlocksEditorTextView()
 	private let dividerView = UIView()
@@ -271,6 +275,10 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		let prefixHeight = prefixContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 0)
 		prefixHeight.isActive = true
 		prefixHeightConstraint = prefixHeight
+
+		let checkboxLineHeight = prefixContainer.heightAnchor.constraint(equalToConstant: 22)
+		checkboxLineHeight.priority = .defaultHigh
+		checkboxLineHeightConstraint = checkboxLineHeight
 
         let minHeight = textView.heightAnchor.constraint(greaterThanOrEqualToConstant: 0)
         minHeight.isActive = true
@@ -1144,10 +1152,12 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 			checkboxButton.isHidden = false
 			prefixContainer.isHidden = false
 			prefixWidthConstraint?.constant = 26
+			checkboxLineHeightConstraint?.constant = ceil(font.lineHeight)
 			if let config = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold) as UIImage.SymbolConfiguration? {
 				checkboxButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 			}
         }
+        checkboxLineHeightConstraint?.isActive = (style == .checkbox)
         
         // Setting `textView.font` above drops `.foregroundColor` from typingAttributes; restore
         // it so freshly typed characters are already coloured and the base-attributes pass never
