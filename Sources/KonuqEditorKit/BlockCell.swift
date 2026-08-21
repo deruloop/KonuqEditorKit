@@ -141,6 +141,9 @@ protocol BlockCellDelegate: AnyObject {
     func blockCell(_ cell: BlockCell, didTrigger action: KeyboardAction)
     func blockCell(_ cell: BlockCell, didPasteBlocks snapshots: [EditorBlockSnapshot])
 	func blockCell(_ cell: BlockCell, didTapURL url: URL)
+	/// Mac runtime: the cell hands its accessory bar over to be docked at the bottom
+	/// of the editor pane (inputAccessoryView would span the whole window there).
+	func blockCell(_ cell: BlockCell, dockAccessory accessory: UIView)
 	func blockCell(_ cell: BlockCell, didChangeInlineTypingModeBold isBold: Bool, italic isItalic: Bool)
 	func blockCell(_ cell: BlockCell, didRequestMoveFocus direction: BlockFocusMoveDirection)
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode { get }
@@ -405,7 +408,9 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 				self?.textView.resignFirstResponder()
 			}
         )
-        textView.inputAccessoryView = keyboardAccessoryView
+        if isMacRuntimeHost() == false {
+            textView.inputAccessoryView = keyboardAccessoryView
+        }
         self.keyboardAccessoryView = keyboardAccessoryView
 
 		let nc = NotificationCenter.default
@@ -518,7 +523,13 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     func textViewDidBeginEditing(_ textView: UITextView) {
         updateKeyboardAccessoryState()
         if let keyboardAccessoryView {
-            textView.inputAccessoryView = keyboardAccessoryView
+            if isMacRuntimeHost() {
+                // Mac: dock the SAME accessory inside the editor pane instead of the
+                // window-wide keyboard accessory area.
+                delegate?.blockCell(self, dockAccessory: keyboardAccessoryView)
+            } else {
+                textView.inputAccessoryView = keyboardAccessoryView
+            }
         }
 		applyStyle()
 		applyInlineChecklistAttributesIfNeeded(preservingSelection: textView.selectedRange)
@@ -533,7 +544,9 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
-        if let keyboardAccessoryView {
+        // Mac: the docked bar persists in the pane (focus hops between cells would
+        // otherwise flicker it); on touch platforms detach as before.
+        if keyboardAccessoryView != nil, isMacRuntimeHost() == false {
             textView.inputAccessoryView = nil
         }
 		if isApplyingInlineTagAttributes { return }
@@ -2467,4 +2480,11 @@ private extension BlockCell {
 		}
 		isApplyingInlineLinkAttributes = false
 	}
+}
+
+/// Whether we're running as an iOS app on macOS — where inputAccessoryView docks
+/// to the whole window instead of the editor pane.
+func isMacRuntimeHost() -> Bool {
+	if #available(iOS 14.0, *) { return ProcessInfo.processInfo.isiOSAppOnMac }
+	return false
 }

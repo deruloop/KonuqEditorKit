@@ -43,6 +43,11 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     /// on every partial result and kill the session).
     private var isApplyingDictationText = false
 
+    /// Mac runtime: hosts the keyboard accessory bar docked at the bottom of the
+    /// editor pane (inputAccessoryView would span the whole window there).
+    private let accessoryDockContainer = UIView()
+    private var isAccessoryDocked = false
+
     /// Dedicated undo manager for block-level operations (delete/restore). Text
     /// editing keeps using each UITextView's own undo manager; this one is active
     /// while the controller is first responder (i.e. in block-selection mode).
@@ -157,6 +162,15 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        ])
+
+        accessoryDockContainer.translatesAutoresizingMaskIntoConstraints = false
+        accessoryDockContainer.isHidden = true
+        view.addSubview(accessoryDockContainer)
+        NSLayoutConstraint.activate([
+            accessoryDockContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            accessoryDockContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            accessoryDockContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         ])
         
         if document.order.isEmpty {
@@ -1508,6 +1522,29 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 
 	func blockCell(_ cell: BlockCell, didTapURL url: URL) {
 		onOpenURL?(url)
+	}
+
+	func blockCell(_ cell: BlockCell, dockAccessory accessory: UIView) {
+		if accessory.superview === accessoryDockContainer {
+			accessoryDockContainer.isHidden = false
+			return
+		}
+		accessoryDockContainer.subviews.forEach { $0.removeFromSuperview() }
+		accessory.translatesAutoresizingMaskIntoConstraints = false
+		accessoryDockContainer.addSubview(accessory)
+		NSLayoutConstraint.activate([
+			accessory.topAnchor.constraint(equalTo: accessoryDockContainer.topAnchor),
+			accessory.bottomAnchor.constraint(equalTo: accessoryDockContainer.bottomAnchor),
+			accessory.leadingAnchor.constraint(equalTo: accessoryDockContainer.leadingAnchor),
+			accessory.trailingAnchor.constraint(equalTo: accessoryDockContainer.trailingAnchor)
+		])
+		accessoryDockContainer.isHidden = false
+		if isAccessoryDocked == false {
+			isAccessoryDocked = true
+			// Keep the last blocks reachable above the docked bar.
+			tableView.contentInset.bottom += 58
+			tableView.verticalScrollIndicatorInsets.bottom = tableView.contentInset.bottom
+		}
 	}
 
 	func blockCell(_ cell: BlockCell, didPasteBlocks snapshots: [EditorBlockSnapshot]) {
