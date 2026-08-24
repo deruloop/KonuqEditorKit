@@ -56,19 +56,27 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     override var canBecomeFirstResponder: Bool { true }
 
     override var keyCommands: [UIKeyCommand]? {
-        guard isSelectionMode else { return nil }
-        let copy = UIKeyCommand(input: "c", modifierFlags: .command, action: #selector(handleSelectionCopyCommand))
-        let cut = UIKeyCommand(input: "x", modifierFlags: .command, action: #selector(handleSelectionCutCommand))
-        // Plain backspace: in selection mode no text view is editing, so it can't
-        // clash with typing.
-        let del = UIKeyCommand(input: "\u{8}", modifierFlags: [], action: #selector(handleSelectionDeleteCommand))
-        let selectAll = UIKeyCommand(input: "a", modifierFlags: .command, action: #selector(handleSelectionSelectAllCommand))
+        // Undo/redo must stay available OUTSIDE selection mode too: a structural
+        // delete exits selection, and without these ⌘Z would reach nobody (a text
+        // view that is first responder handles it first through its own command).
         let undo = UIKeyCommand(input: "z", modifierFlags: .command, action: #selector(handleUndoCommand))
         let redo = UIKeyCommand(input: "z", modifierFlags: [.command, .shift], action: #selector(handleRedoCommand))
-        for command in [copy, cut, del, selectAll, undo, redo] {
+        var commands = [undo, redo]
+
+        if isSelectionMode {
+            let copy = UIKeyCommand(input: "c", modifierFlags: .command, action: #selector(handleSelectionCopyCommand))
+            let cut = UIKeyCommand(input: "x", modifierFlags: .command, action: #selector(handleSelectionCutCommand))
+            // Plain backspace: in selection mode no text view is editing, so it can't
+            // clash with typing.
+            let del = UIKeyCommand(input: "\u{8}", modifierFlags: [], action: #selector(handleSelectionDeleteCommand))
+            let selectAll = UIKeyCommand(input: "a", modifierFlags: .command, action: #selector(handleSelectionSelectAllCommand))
+            commands.append(contentsOf: [copy, cut, del, selectAll])
+        }
+
+        for command in commands {
             if #available(iOS 15.0, *) { command.wantsPriorityOverSystemBehavior = true }
         }
-        return [copy, cut, del, selectAll, undo, redo]
+        return commands
     }
 
     // The shortcuts mirror the selection-toolbar buttons exactly: act, exit
@@ -336,11 +344,11 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			(cell as? BlockSelectableCell)?.isSelectionMode = enabled
 		}
         // Become first responder so ⌘C / ⌘⌫ / ⌘Z reach this controller in
-        // selection mode (no text view is editing then).
+        // selection mode (no text view is editing then). On exit we deliberately
+        // KEEP it: otherwise nothing is first responder right after a delete and
+        // ⌘Z would be delivered to nobody. A text view that gains focus takes over.
         if enabled {
             becomeFirstResponder()
-        } else {
-            resignFirstResponder()
         }
         // The docked editing bar (Mac/iPad) is meaningless without a caret and
         // would stack under the selection action bar: hide it while selecting.
