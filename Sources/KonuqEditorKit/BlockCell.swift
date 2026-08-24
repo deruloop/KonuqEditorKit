@@ -2155,6 +2155,10 @@ private extension StringProtocol {
 }
 
 private extension BlockCell {
+	private static func spaceAdvance(for font: UIFont) -> CGFloat {
+		(" " as NSString).size(withAttributes: [.font: font]).width
+	}
+
 	func applyInlineChecklistAttributesIfNeeded(preservingSelection selection: NSRange) {
 		guard let current = textView.attributedText else { return }
 		if current.length == 0 {
@@ -2174,6 +2178,9 @@ private extension BlockCell {
 				seed.addAttribute(.font, value: baseFont, range: r)
 				seed.addAttribute(.foregroundColor, value: UIColor.clear, range: r)
 				seed.addAttribute(.appInlineCheckboxHidden, value: true, range: r)
+				// The base-font space keeps the line height, but its advance would
+				// indent the first line vs wrapped lines: cancel it with kerning.
+				seed.addAttribute(.kern, value: -Self.spaceAdvance(for: baseFont), range: r)
 			}
 			isApplyingInlineChecklistAttributes = true
 			textView.attributedText = seed
@@ -2202,6 +2209,7 @@ private extension BlockCell {
 			updated.removeAttribute(.font, range: range)
 			updated.removeAttribute(.foregroundColor, range: range)
 			updated.removeAttribute(.appInlineCheckboxHidden, range: range)
+			updated.removeAttribute(.kern, range: range)
 		}
 
 		var rangesToClearDimmed: [NSRange] = []
@@ -2295,6 +2303,9 @@ private extension BlockCell {
 				updated.addAttribute(.font, value: baseFont, range: r)
 				updated.addAttribute(.foregroundColor, value: UIColor.clear, range: r)
 				updated.addAttribute(.appInlineCheckboxHidden, value: true, range: r)
+				// The base-font space keeps the line height, but its advance would
+				// indent the first line vs wrapped lines: cancel it with kerning.
+				updated.addAttribute(.kern, value: -Self.spaceAdvance(for: baseFont), range: r)
 			}
 		}
 
