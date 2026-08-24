@@ -9,6 +9,11 @@ private extension NSAttributedString.Key {
 	static let appInlineTagFinal = NSAttributedString.Key("app.inline.tag.final")
 	static let appInlineLinkUrl = NSAttributedString.Key("app.inline.link.url")
 	static let appInlineLinkHidden = NSAttributedString.Key("app.inline.link.hidden")
+	/// Marks links produced by auto-detection (as opposed to markdown `[x](y)`, map
+	/// and note links, whose url attribute is persistent). Auto-links are recomputed
+	/// from scratch on every pass, so a partial match typed a keystroke ago
+	/// ("…calicchia.de") can't survive and block the full one ("…calicchia.dev").
+	static let appInlineAutoLink = NSAttributedString.Key("app.inline.link.auto")
 	static let appInlineNoteLinkId = NSAttributedString.Key("app.inline.note.link.id")
 	static let appInlineCheckboxHidden = NSAttributedString.Key("app.inline.checkbox.hidden")
 	static let appInlineCheckboxDimmed = NSAttributedString.Key("app.inline.checkbox.dimmed")
@@ -2517,6 +2522,19 @@ private extension BlockCell {
 			// re-derived from it below so the link survives every later normalisation pass.
 		}
 
+		// Wipe previous auto-detected links entirely so detection below starts clean:
+		// their url attribute must NOT persist like explicit links do, otherwise a
+		// stale partial match (typed one keystroke earlier) keeps winning.
+		var autoLinkRanges: [NSRange] = []
+		updated.enumerateAttribute(.appInlineAutoLink, in: NSRange(location: 0, length: updated.length), options: []) { value, range, _ in
+			if value != nil { autoLinkRanges.append(range) }
+		}
+		for range in autoLinkRanges {
+			updated.removeAttribute(.appInlineAutoLink, range: range)
+			updated.removeAttribute(.appInlineLinkUrl, range: range)
+			updated.removeAttribute(.link, range: range)
+		}
+
 		updated.enumerateAttribute(.appInlineNoteLinkId, in: NSRange(location: 0, length: updated.length), options: []) { value, range, _ in
 			guard let value else { return }
 			let id: String? = {
@@ -2586,9 +2604,19 @@ private extension BlockCell {
 			let range = detected.range
 			guard range.location != NSNotFound, range.length > 0 else { continue }
 			guard NSMaxRange(range) <= updated.length else { continue }
-			if updated.attribute(.appInlineLinkUrl, at: range.location, effectiveRange: nil) != nil { continue }
+			// Skip only if an EXPLICIT link (markdown/map/note) overlaps anywhere in
+			// the match — checking just the first character would miss partial overlaps.
+			var overlapsExplicitLink = false
+			updated.enumerateAttribute(.appInlineLinkUrl, in: range, options: []) { value, _, stop in
+				if value != nil {
+					overlapsExplicitLink = true
+					stop.pointee = true
+				}
+			}
+			if overlapsExplicitLink { continue }
 			updated.addAttribute(.link, value: detected.url, range: range)
 			updated.addAttribute(.appInlineLinkUrl, value: detected.url.absoluteString, range: range)
+			updated.addAttribute(.appInlineAutoLink, value: true, range: range)
 		}
 
 		if updated.isEqual(current) { return }
