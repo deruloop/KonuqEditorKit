@@ -2130,9 +2130,26 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
                     let fallback: UTType = media.kind == .image ? .jpeg : .mpeg4Movie
                     let typeId = UTType(filenameExtension: url.pathExtension)?.identifier ?? fallback.identifier
                     fileProvider.suggestedName = url.lastPathComponent
+                    // File representation: Finder & file-based targets.
                     fileProvider.registerFileRepresentation(forTypeIdentifier: typeId, fileOptions: [], visibility: .all) { completion in
                         completion(url, false, nil)
                         return nil
+                    }
+                    // Data representations: chat inputs / web-based apps that take
+                    // image bytes rather than file promises. Lazy — read only when
+                    // a target actually asks for them.
+                    if media.kind == .image {
+                        let dataTypeIds = typeId == UTType.image.identifier
+                            ? [typeId]
+                            : [typeId, UTType.image.identifier]
+                        for dataTypeId in dataTypeIds {
+                            fileProvider.registerDataRepresentation(forTypeIdentifier: dataTypeId, visibility: .all) { completion in
+                                DispatchQueue.global(qos: .userInitiated).async {
+                                    completion(try? Data(contentsOf: url), nil)
+                                }
+                                return nil
+                            }
+                        }
                     }
                     provider = fileProvider
                 } else {
