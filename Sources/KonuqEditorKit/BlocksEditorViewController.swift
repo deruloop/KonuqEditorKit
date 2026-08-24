@@ -1450,8 +1450,27 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
             result = attributed.string
         }
 
-        return result
+        return Self.mergeAdjacentMarkdownLinks(result)
     }
+
+	/// `enumerateAttributes` walks attribute RUNS, so one link whose range is split
+	/// by an unrelated attribute boundary is emitted as two adjacent
+	/// `[a](url)[b](url)` segments — which renders as two separate anchors on the
+	/// web (two hover highlights). Fold neighbours that share the same URL.
+	private static func mergeAdjacentMarkdownLinks(_ markdown: String) -> String {
+		guard markdown.contains("](") else { return markdown }
+		let pattern = "\\[([^\\]]*)\\]\\(([^)\\s]+)\\)\\[([^\\]]*)\\]\\(\\2\\)"
+		guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return markdown }
+		var current = markdown
+		// Each pass merges one neighbour per link; repeat until stable (a link split
+		// into N runs needs N-1 merges).
+		while true {
+			let range = NSRange(location: 0, length: (current as NSString).length)
+			let merged = regex.stringByReplacingMatches(in: current, options: [], range: range, withTemplate: "[$1$3]($2)")
+			if merged == current { return current }
+			current = merged
+		}
+	}
     
     @objc
     private func moveSelectedUp() {
