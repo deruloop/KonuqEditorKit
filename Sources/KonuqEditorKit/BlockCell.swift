@@ -1876,13 +1876,18 @@ private final class KeyboardActionAccessoryView: UIInputView {
             blurView.trailingAnchor.constraint(equalTo: trailingAnchor)
         ])
 
-		blurView.contentView.addSubview(doneButton)
-		doneButton.translatesAutoresizingMaskIntoConstraints = false
-		NSLayoutConstraint.activate([
-			doneButton.trailingAnchor.constraint(equalTo: blurView.contentView.trailingAnchor, constant: -12),
-			doneButton.centerYAnchor.constraint(equalTo: blurView.contentView.centerYAnchor),
-			doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 34)
-		])
+		// Mac: the bar is permanently docked in the pane — there is no keyboard to
+		// dismiss, so the Done button is meaningless there.
+		let showsDoneButton = isMacRuntimeHost() == false
+		if showsDoneButton {
+			blurView.contentView.addSubview(doneButton)
+			doneButton.translatesAutoresizingMaskIntoConstraints = false
+			NSLayoutConstraint.activate([
+				doneButton.trailingAnchor.constraint(equalTo: blurView.contentView.trailingAnchor, constant: -12),
+				doneButton.centerYAnchor.constraint(equalTo: blurView.contentView.centerYAnchor),
+				doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 34)
+			])
+		}
 
         blurView.contentView.addSubview(scrollView)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -1890,7 +1895,9 @@ private final class KeyboardActionAccessoryView: UIInputView {
             scrollView.topAnchor.constraint(equalTo: blurView.contentView.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: blurView.contentView.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: blurView.contentView.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: doneButton.leadingAnchor, constant: -8)
+            showsDoneButton
+                ? scrollView.trailingAnchor.constraint(equalTo: doneButton.leadingAnchor, constant: -8)
+                : scrollView.trailingAnchor.constraint(equalTo: blurView.contentView.trailingAnchor, constant: -12)
         ])
 
         scrollView.showsHorizontalScrollIndicator = false
