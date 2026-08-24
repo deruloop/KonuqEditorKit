@@ -230,7 +230,79 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		pattern: "\\[([^\\]]+)\\]\\(([^\\s\\)]+)\\)",
 		options: []
 	)
-	private static let linkDetector = try! NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+	/// Explicit auto-link recognition, in priority order: email, URL with an
+	/// explicit scheme, bare domain (optionally www / port / path).
+	///
+	/// NSDataDetector was used before but it validates the TLD against a built-in
+	/// list, so "deruloop.dev/packd" matched only "deruloop.de" (a known TLD) and
+	/// left the rest dangling — and emails fell into the same domain heuristics
+	/// instead of becoming mailto links.
+	private static let autoLinkRegex: NSRegularExpression = {
+		let label = "[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+		let domain = "\(label)(?:\\.\(label))*\\.[A-Za-z]{2,}"
+		let email = "[A-Za-z0-9._%+-]+@\(domain)"
+		let schemeUrl = "[A-Za-z][A-Za-z0-9+.-]*://[^\\s<>\"]+"
+		let bareUrl = "(?:www\\.)?\(domain)(?::\\d{2,5})?(?:/[^\\s<>\"]*)?"
+		return try! NSRegularExpression(pattern: "(?:\(email))|(?:\(schemeUrl))|(?:\(bareUrl))", options: [])
+	}()
+
+	/// Extensions that are far more likely to be filenames than domains in a note
+	/// ("README.md", "shot.png"). Only consulted for bare tokens — an explicit
+	/// scheme ("https://foo.zip") always wins. Real TLDs we care about (app, dev,
+	/// io, co, me) are deliberately absent.
+	private static let nonDomainFileExtensions: Set<String> = [
+		"txt", "md", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pages", "numbers",
+		"png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "bmp", "tiff",
+		"zip", "rar", "tar", "gz", "dmg", "pkg", "exe",
+		"mp3", "mp4", "mov", "avi", "wav", "m4a",
+		"csv", "json", "xml", "yml", "yaml", "log", "env",
+		"swift", "kt", "java", "py", "rb", "php", "html", "css", "js", "ts"
+	]
+
+	private static func autoLinkMatches(in text: String) -> [(range: NSRange, url: URL)] {
+		let ns = text as NSString
+		var results: [(range: NSRange, url: URL)] = []
+		let fullRange = NSRange(location: 0, length: ns.length)
+		for match in autoLinkRegex.matches(in: text, options: [], range: fullRange) {
+			var range = match.range
+			guard range.length > 0 else { continue }
+
+			// Never start mid-token (e.g. the domain part of an address already matched).
+			if range.location > 0 {
+				let previous = ns.substring(with: NSRange(location: range.location - 1, length: 1))
+				let midToken = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "@"))
+				if previous.rangeOfCharacter(from: midToken) != nil { continue }
+			}
+
+			// Trailing sentence punctuation is not part of the link.
+			var token = ns.substring(with: range)
+			while let last = token.last, ".,;:!?\"'".contains(last) {
+				token.removeLast()
+				range.length -= 1
+			}
+			if token.hasSuffix(")"), token.contains("(") == false {
+				token.removeLast()
+				range.length -= 1
+			}
+			guard token.isEmpty == false else { continue }
+
+			let urlString: String
+			if token.contains("://") {
+				urlString = token
+			} else if token.contains("@") {
+				urlString = "mailto:\(token)"
+			} else {
+				// Bare token: skip things that are plainly filenames.
+				let host = token.split(separator: "/").first.map(String.init) ?? token
+				let ext = host.split(separator: ".").last.map { $0.lowercased() } ?? ""
+				if Self.nonDomainFileExtensions.contains(ext) { continue }
+				urlString = "https://\(token)"
+			}
+			guard let url = URL(string: urlString) else { continue }
+			results.append((range, url))
+		}
+		return results
+	}
     var isSelectionMode: Bool = false {
         didSet {
             textView.isEditable = !isSelectionMode
@@ -2510,14 +2582,13 @@ private extension BlockCell {
 			remapSelectionForReplacement(in: full, replacementLength: replacement.length)
 		}
 
-		let detected = BlockCell.linkDetector.matches(in: updated.string, options: [], range: NSRange(location: 0, length: updated.length))
-		for match in detected {
-			guard let url = match.url else { continue }
-			let range = match.range
+		for detected in BlockCell.autoLinkMatches(in: updated.string) {
+			let range = detected.range
 			guard range.location != NSNotFound, range.length > 0 else { continue }
+			guard NSMaxRange(range) <= updated.length else { continue }
 			if updated.attribute(.appInlineLinkUrl, at: range.location, effectiveRange: nil) != nil { continue }
-			updated.addAttribute(.link, value: url, range: range)
-			updated.addAttribute(.appInlineLinkUrl, value: url.absoluteString, range: range)
+			updated.addAttribute(.link, value: detected.url, range: range)
+			updated.addAttribute(.appInlineLinkUrl, value: detected.url.absoluteString, range: range)
 		}
 
 		if updated.isEqual(current) { return }
