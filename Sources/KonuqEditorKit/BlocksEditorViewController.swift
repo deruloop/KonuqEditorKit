@@ -2130,6 +2130,15 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
                     let fallback: UTType = media.kind == .image ? .jpeg : .mpeg4Movie
                     let typeId = UTType(filenameExtension: url.pathExtension)?.identifier ?? fallback.identifier
                     fileProvider.suggestedName = url.lastPathComponent
+                    // Concrete file URL (public.file-url): what Electron/Chromium-based
+                    // targets (chat inputs, browsers) read from a drag — they ignore
+                    // file promises and raw data. Registered both as an object and as
+                    // the classic raw payload (URL bytes) for maximum compatibility.
+                    fileProvider.registerObject(url as NSURL, visibility: .all)
+                    fileProvider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { completion in
+                        completion(url.dataRepresentation, nil)
+                        return nil
+                    }
                     // File representation: Finder & file-based targets.
                     fileProvider.registerFileRepresentation(forTypeIdentifier: typeId, fileOptions: [], visibility: .all) { completion in
                         completion(url, false, nil)
