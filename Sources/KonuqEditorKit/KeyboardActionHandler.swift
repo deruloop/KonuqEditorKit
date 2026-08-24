@@ -106,6 +106,20 @@ final class KeyboardActionHandler {
             }
 
 			guard case .text(let textBlock) = info.content else { return nil }
+
+			// Enter on an EMPTY checkbox (just the hidden "[ ] " prefix) exits
+			// checkbox mode — the block becomes a plain text block, like backspace
+			// at its start does — instead of chaining another empty checkbox.
+			if textBlock.style == .checkbox {
+				let ns = textBlock.text.string as NSString
+				let remainder = ns.length <= 4 ? "" : ns.substring(from: 4)
+				if remainder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+					var updated = info
+					updated.content = .text(TextBlock(text: NSAttributedString(string: ""), style: .text))
+					document.setBlock(updated)
+					return info.id
+				}
+			}
 			
 			let isToggle = textBlock.style == .toggle || isToggleHeader(style: textBlock.style)
 			let _ = isToggle
