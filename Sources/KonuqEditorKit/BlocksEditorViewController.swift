@@ -977,6 +977,148 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         let startUtf16: Int
     }
 
+	private struct ParsedMarkdownBlock {
+		let style: TextStyle
+		let text: NSAttributedString
+	}
+
+	/// Parses pasted text as markdown: block markers (headings, bullets, checkboxes,
+	/// dividers, code fences) become real blocks and inline markers (**bold**,
+	/// *italic*, ~~strike~~, `code`) become real formatting. Plain text is just the
+	/// degenerate case: one text block per line.
+	private func parseMarkdownBlocks(_ raw: String) -> [ParsedMarkdownBlock] {
+		let normalized = raw
+			.replacingOccurrences(of: "\r\n", with: "\n")
+			.replacingOccurrences(of: "\r", with: "\n")
+		let lines = normalized.components(separatedBy: "\n")
+		var result: [ParsedMarkdownBlock] = []
+		var i = 0
+		while i < lines.count {
+			let trimmed = lines[i].trimmingCharacters(in: .whitespaces)
+			if trimmed.isEmpty { i += 1; continue }
+
+			if trimmed.hasPrefix("```") {
+				var codeLines: [String] = []
+				i += 1
+				while i < lines.count, lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("```") == false {
+					codeLines.append(lines[i])
+					i += 1
+				}
+				if i < lines.count { i += 1 } // consume the closing fence
+				let code = codeLines.joined(separator: "\n")
+				if code.isEmpty == false {
+					result.append(ParsedMarkdownBlock(style: .code, text: NSAttributedString(string: code)))
+				}
+				continue
+			}
+			i += 1
+
+			if trimmed == "---" || trimmed == "----" || trimmed == "***" || trimmed == "___" {
+				result.append(ParsedMarkdownBlock(style: .text, text: NSAttributedString(string: "----")))
+				continue
+			}
+
+			func stripped(_ prefix: String) -> String? {
+				trimmed.hasPrefix(prefix) ? String(trimmed.dropFirst(prefix.count)) : nil
+			}
+
+			if let rest = stripped("###### ") { result.append(ParsedMarkdownBlock(style: .heading6, text: parseInlineMarkdown(rest))); continue }
+			if let rest = stripped("##### ") { result.append(ParsedMarkdownBlock(style: .heading5, text: parseInlineMarkdown(rest))); continue }
+			if let rest = stripped("#### ") { result.append(ParsedMarkdownBlock(style: .heading4, text: parseInlineMarkdown(rest))); continue }
+			if let rest = stripped("### ") { result.append(ParsedMarkdownBlock(style: .heading3, text: parseInlineMarkdown(rest))); continue }
+			if let rest = stripped("## ") { result.append(ParsedMarkdownBlock(style: .description, text: parseInlineMarkdown(rest))); continue }
+			if let rest = stripped("# ") { result.append(ParsedMarkdownBlock(style: .title, text: parseInlineMarkdown(rest))); continue }
+
+			var checkboxRest: String?
+			var checked = false
+			for p in ["- [ ] ", "* [ ] ", "[ ] "] where trimmed.hasPrefix(p) {
+				checkboxRest = String(trimmed.dropFirst(p.count))
+				checked = false
+			}
+			for p in ["- [x] ", "- [X] ", "* [x] ", "* [X] ", "[x] ", "[X] "] where trimmed.hasPrefix(p) {
+				checkboxRest = String(trimmed.dropFirst(p.count))
+				checked = true
+			}
+			if let rest = checkboxRest {
+				let combined = NSMutableAttributedString(string: checked ? "[x] " : "[ ] ")
+				combined.append(parseInlineMarkdown(rest))
+				result.append(ParsedMarkdownBlock(style: .checkbox, text: combined))
+				continue
+			}
+
+			if let rest = stripped("- ") { result.append(ParsedMarkdownBlock(style: .listBullet, text: parseInlineMarkdown(rest))); continue }
+			if let rest = stripped("* ") { result.append(ParsedMarkdownBlock(style: .listBullet, text: parseInlineMarkdown(rest))); continue }
+			if let rest = stripped("> ") { result.append(ParsedMarkdownBlock(style: .toggle, text: parseInlineMarkdown(rest))); continue }
+
+			result.append(ParsedMarkdownBlock(style: .text, text: parseInlineMarkdown(trimmed)))
+		}
+		return result
+	}
+
+	private func handleMarkdownPaste(text: String, cell: BlockCell) {
+		let parsed = parseMarkdownBlocks(text)
+		guard parsed.isEmpty == false else { return }
+
+		let currentText = cell.textView.attributedText ?? NSAttributedString(string: "")
+		document.updateText(blockId: cell.blockId, text: currentText)
+		let oldOrder = document.order
+		let range = cell.textView.selectedRange
+
+		var afterId = cell.blockId
+		var startIndex = 0
+		var focusTargetId: String?
+
+		if let current = document.block(id: cell.blockId), case .text(let currentBlock) = current.content {
+			let ns = currentBlock.text.string as NSString
+			let isCurrentEmpty: Bool = {
+				if currentBlock.style == .checkbox { return ns.length <= 4 }
+				return currentBlock.text.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+			}()
+			let first = parsed[0]
+			if isCurrentEmpty {
+				// Replace the empty block with the first parsed block.
+				var updated = current
+				updated.content = .text(TextBlock(text: first.text, style: first.style))
+				document.setBlock(updated)
+				startIndex = 1
+				focusTargetId = current.id
+			} else if first.style == .text, currentBlock.style != .code {
+				// Splice a plain first line at the caret, like a regular paste.
+				let location = max(0, min(range.location, ns.length))
+				let length = max(0, min(range.length, ns.length - location))
+				let updatedText = NSMutableAttributedString(attributedString: currentBlock.text)
+				updatedText.replaceCharacters(in: NSRange(location: location, length: length), with: first.text)
+				var updated = current
+				updated.content = .text(TextBlock(text: updatedText, style: currentBlock.style))
+				document.setBlock(updated)
+				startIndex = 1
+				focusTargetId = current.id
+			}
+		}
+
+		for parsedBlock in parsed[startIndex...] {
+			let block = Block(content: .text(TextBlock(text: parsedBlock.text, style: parsedBlock.style)))
+			_ = document.insert(block, after: afterId)
+			afterId = block.id
+			focusTargetId = block.id
+		}
+
+		pendingFocusBlockId = focusTargetId
+		pendingFocusCursor = .end
+
+		if let updated = document.block(id: cell.blockId),
+		   case .text(let updatedBlock) = updated.content,
+		   let row = document.order.firstIndex(of: cell.blockId) {
+			cell.configure(blockId: cell.blockId, text: updatedBlock.text, style: updatedBlock.style, isFirstBlock: row == 0)
+		}
+
+		applyOrderChange(oldOrder: oldOrder) { [weak self] in
+			guard let self else { return }
+			self.scheduleBlocksChanged(immediate: true)
+			self.focusIfNeeded()
+		}
+	}
+
     private func parseInlineMarkdown(_ markdown: String) -> NSAttributedString {
         let tokens: [InlineToken] = [
             InlineToken(literal: "~~", kind: .strike),
@@ -1614,6 +1756,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			onInsertLocation?()
 			return
 		}
+        if case let .pasteMultiline(text, _) = action {
+            handleMarkdownPaste(text: text, cell: cell)
+            return
+        }
         if case .markdownTurnInto = action {
 			_ = keyboardHandler.handle(blockId: cell.blockId, action: action)
 			if let row = document.order.firstIndex(of: cell.blockId),
