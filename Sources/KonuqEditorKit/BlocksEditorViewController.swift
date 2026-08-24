@@ -2117,7 +2117,34 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     
     func tableView(_ tableView: UITableView, itemsForBeginning session: UIDragSession, at indexPath: IndexPath) -> [UIDragItem] {
         let blockId = document.order[indexPath.row]
-        let provider = NSItemProvider(object: blockId as NSString)
+        // Internal reorder works through localObject; the provider is what EXTERNAL
+        // drop targets (Finder, other apps) receive — so vend real content, not the
+        // block id: the media file for media blocks, the text for text blocks.
+        let provider: NSItemProvider
+        if let block = document.block(id: blockId) {
+            switch block.content {
+            case .media(let media):
+                if let url = MediaReferenceResolver.localFileURL(from: media.reference),
+                   FileManager.default.fileExists(atPath: url.path) {
+                    let fileProvider = NSItemProvider()
+                    let fallback: UTType = media.kind == .image ? .jpeg : .mpeg4Movie
+                    let typeId = UTType(filenameExtension: url.pathExtension)?.identifier ?? fallback.identifier
+                    fileProvider.suggestedName = url.lastPathComponent
+                    fileProvider.registerFileRepresentation(forTypeIdentifier: typeId, fileOptions: [], visibility: .all) { completion in
+                        completion(url, false, nil)
+                        return nil
+                    }
+                    provider = fileProvider
+                } else {
+                    provider = NSItemProvider(object: blockId as NSString)
+                }
+            case .text(let textBlock):
+                let text = textBlock.text.string
+                provider = NSItemProvider(object: (text.isEmpty ? blockId : text) as NSString)
+            }
+        } else {
+            provider = NSItemProvider(object: blockId as NSString)
+        }
         let item = UIDragItem(itemProvider: provider)
         item.localObject = blockId
         return [item]
