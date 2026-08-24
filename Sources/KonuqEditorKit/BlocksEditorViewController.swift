@@ -342,6 +342,13 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         } else {
             resignFirstResponder()
         }
+        // The docked editing bar (Mac/iPad) is meaningless without a caret and
+        // would stack under the selection action bar: hide it while selecting.
+        if enabled {
+            accessoryDockContainer.isHidden = true
+        } else {
+            accessoryDockContainer.isHidden = accessoryDockContainer.subviews.isEmpty
+        }
         notifySelectionState()
     }
 
@@ -1525,6 +1532,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	}
 
 	func blockCell(_ cell: BlockCell, dockAccessory accessory: UIView) {
+		guard isSelectionMode == false else { return }
 		if accessory.superview === accessoryDockContainer {
 			accessoryDockContainer.isHidden = false
 			return
