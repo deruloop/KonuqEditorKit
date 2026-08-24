@@ -31,6 +31,16 @@ final class BlocksEditorTextView: UITextView {
 		if #available(iOS 15.0, *) { italic.wantsPriorityOverSystemBehavior = true }
 		commands.append(italic)
 
+		let undo = UIKeyCommand(input: "z", modifierFlags: .command, action: #selector(handleUndoCommand))
+		undo.discoverabilityTitle = "Undo"
+		if #available(iOS 15.0, *) { undo.wantsPriorityOverSystemBehavior = true }
+		commands.append(undo)
+
+		let redo = UIKeyCommand(input: "z", modifierFlags: [.command, .shift], action: #selector(handleRedoCommand))
+		redo.discoverabilityTitle = "Redo"
+		if #available(iOS 15.0, *) { redo.wantsPriorityOverSystemBehavior = true }
+		commands.append(redo)
+
 		if isMacRuntime() {
 			let textBlock = UIKeyCommand(input: "b", modifierFlags: [.command, .shift], action: #selector(handleCommandMakeTextBlock))
 			textBlock.discoverabilityTitle = "Text block"
@@ -78,6 +88,26 @@ final class BlocksEditorTextView: UITextView {
 			return
 		}
 		super.paste(sender)
+	}
+
+	/// Text-level undo first (typing inside a block), then the document's structural
+	/// undo — merges, splits, deletes and pastes can't be expressed as text edits.
+	@objc private func handleUndoCommand() {
+		if let manager = undoManager, manager.canUndo {
+			manager.undo()
+			return
+		}
+		guard let cell = ownerCell else { return }
+		cell.delegate?.blockCellRequestsDocumentUndo(cell)
+	}
+
+	@objc private func handleRedoCommand() {
+		if let manager = undoManager, manager.canRedo {
+			manager.redo()
+			return
+		}
+		guard let cell = ownerCell else { return }
+		cell.delegate?.blockCellRequestsDocumentRedo(cell)
 	}
 
 	@objc private func handleCommandBold() { ownerCell?.toggleBold() }
@@ -144,6 +174,10 @@ protocol BlockCellDelegate: AnyObject {
 	/// Mac runtime: the cell hands its accessory bar over to be docked at the bottom
 	/// of the editor pane (inputAccessoryView would span the whole window there).
 	func blockCell(_ cell: BlockCell, dockAccessory accessory: UIView)
+	/// ⌘Z / ⇧⌘Z while editing, once the text view's own undo stack is exhausted:
+	/// structural edits (merge, split, delete, paste) live on the document.
+	func blockCellRequestsDocumentUndo(_ cell: BlockCell)
+	func blockCellRequestsDocumentRedo(_ cell: BlockCell)
 	func blockCell(_ cell: BlockCell, didChangeInlineTypingModeBold isBold: Bool, italic isItalic: Bool)
 	func blockCell(_ cell: BlockCell, didRequestMoveFocus direction: BlockFocusMoveDirection)
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode { get }

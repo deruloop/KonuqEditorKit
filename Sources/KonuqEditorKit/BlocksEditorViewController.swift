@@ -475,6 +475,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	/// holds the cursor (or at the end when nothing is focused).
 	func insertBlocksAtCursor(_ snapshots: [EditorBlockSnapshot]) {
 		guard isSelectionMode == false, !snapshots.isEmpty else { return }
+		registerStructuralUndo(actionName: "Paste Blocks")
 
 		let root: UIView = view.window ?? view
 		var afterId: String? = lastTextBlockId()
@@ -662,16 +663,14 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     
     func deleteSelectedBlocks() {
         guard let indexPaths = tableView.indexPathsForSelectedRows, !indexPaths.isEmpty else { return }
-        let removed: [RemovedBlock] = indexPaths
+        let ids = indexPaths
             .map { $0.row }
             .sorted()
-            .compactMap { row in
+            .compactMap { row -> String? in
                 guard row >= 0, row < document.order.count else { return nil }
-                guard let block = document.block(id: document.order[row]) else { return nil }
-                return RemovedBlock(block: block, index: row)
+                return document.order[row]
             }
-        let ids = removed.map { $0.block.id }
-        registerRestoreUndo(for: removed)
+        registerStructuralUndo(actionName: "Delete")
         document.remove(blockIds: ids)
 
         if document.order.isEmpty {
@@ -690,56 +689,71 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         notifySelectionState()
     }
 
-	private struct RemovedBlock {
-		let block: Block
-		let index: Int
+	/// Full document state: structural edits (merge, split, demote, delete, paste,
+	/// media insert, reorder) can't be expressed as text-level edits, so undo works
+	/// by restoring the whole block graph plus the caret position.
+	private struct DocumentSnapshot {
+		let blocks: [String: Block]
+		let order: [String]
+		let focusedBlockId: String?
+		let caretLocation: Int?
 	}
 
-	private func registerRestoreUndo(for removed: [RemovedBlock]) {
-		guard !removed.isEmpty else { return }
-		blockUndoManager.registerUndo(withTarget: self) { target in
-			target.restoreRemovedBlocks(removed)
+	private func captureDocumentSnapshot() -> DocumentSnapshot {
+		let root: UIView = view.window ?? view
+		var focusedId: String?
+		var caret: Int?
+		if let textView = findFirstResponder(in: root) as? UITextView,
+		   let cell = enclosingBlockCell(for: textView) {
+			focusedId = cell.blockId
+			caret = textView.selectedRange.location
+			// Fold the live text back into the document so the snapshot is exact.
+			document.updateText(blockId: cell.blockId, text: textView.attributedText)
 		}
-		blockUndoManager.setActionName("Delete")
+		return DocumentSnapshot(
+			blocks: document.blocks,
+			order: document.order,
+			focusedBlockId: focusedId,
+			caretLocation: caret
+		)
 	}
 
-	private func restoreRemovedBlocks(_ removed: [RemovedBlock]) {
-		// Delete-all inserts a single empty placeholder block; drop it before restoring.
-		if document.order.count == 1,
-		   let onlyId = document.order.first,
-		   removed.contains(where: { $0.block.id == onlyId }) == false,
-		   isEmptyTextBlock(onlyId) {
-			document.remove(blockId: onlyId)
-		}
-		for entry in removed.sorted(by: { $0.index < $1.index }) {
-			let clamped = min(max(entry.index, 0), document.order.count)
-			_ = document.insert(entry.block, at: clamped)
-		}
+	/// Call BEFORE a structural mutation.
+	func registerStructuralUndo(actionName: String) {
+		let snapshot = captureDocumentSnapshot()
 		blockUndoManager.registerUndo(withTarget: self) { target in
-			target.reDeleteBlocks(removed)
+			target.restoreDocumentSnapshot(snapshot)
 		}
+		blockUndoManager.setActionName(actionName)
+	}
+
+	private func restoreDocumentSnapshot(_ snapshot: DocumentSnapshot) {
+		// Registering the current state as the inverse makes redo work for free.
+		let inverse = captureDocumentSnapshot()
+		blockUndoManager.registerUndo(withTarget: self) { target in
+			target.restoreDocumentSnapshot(inverse)
+		}
+
+		document.replaceAll(blocks: Array(snapshot.blocks.values), order: snapshot.order)
+		if isSelectionMode { setSelectionMode(false) }
 		tableView.reloadData()
 		scheduleBlocksChanged(immediate: true)
-		if isSelectionMode { notifySelectionState() }
+
+		guard let focusId = snapshot.focusedBlockId, document.block(id: focusId) != nil else { return }
+		pendingFocusBlockId = focusId
+		pendingFocusCursor = snapshot.caretLocation.map { .position($0) } ?? .end
+		tableView.layoutIfNeeded()
+		focusIfNeeded()
 	}
 
-	private func reDeleteBlocks(_ removed: [RemovedBlock]) {
-		document.remove(blockIds: removed.map { $0.block.id })
-		if document.order.isEmpty {
-			let initial = Block(content: .text(TextBlock(text: NSAttributedString(string: ""), style: initialEmptyStyle)))
-			document.setBlock(initial)
-		}
-		blockUndoManager.registerUndo(withTarget: self) { target in
-			target.restoreRemovedBlocks(removed)
-		}
-		tableView.reloadData()
-		scheduleBlocksChanged(immediate: true)
-		if isSelectionMode { notifySelectionState() }
+	func performDocumentUndo() {
+		guard blockUndoManager.canUndo else { return }
+		blockUndoManager.undo()
 	}
 
-	private func isEmptyTextBlock(_ id: String) -> Bool {
-		guard let block = document.block(id: id), case let .text(textBlock) = block.content else { return false }
-		return textBlock.text.length == 0
+	func performDocumentRedo() {
+		guard blockUndoManager.canRedo else { return }
+		blockUndoManager.redo()
 	}
 
 	func selectedBlockSnapshots() -> [EditorBlockSnapshot] {
@@ -1697,6 +1711,14 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		}
 	}
 
+	func blockCellRequestsDocumentUndo(_ cell: BlockCell) {
+		performDocumentUndo()
+	}
+
+	func blockCellRequestsDocumentRedo(_ cell: BlockCell) {
+		performDocumentRedo()
+	}
+
 	func blockCell(_ cell: BlockCell, didPasteBlocks snapshots: [EditorBlockSnapshot]) {
 		guard isSelectionMode == false, !snapshots.isEmpty else { return }
 		// Fresh ids so pasting within the same note can't collide with existing blocks.
@@ -1757,10 +1779,13 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			return
 		}
         if case let .pasteMultiline(text, _) = action {
+            registerStructuralUndo(actionName: "Paste")
             handleMarkdownPaste(text: text, cell: cell)
             return
         }
         if case .markdownTurnInto = action {
+            // Style changes (checkbox toggle/demote, headings, code) are structural.
+            registerStructuralUndo(actionName: "Change Block")
 			_ = keyboardHandler.handle(blockId: cell.blockId, action: action)
 			if let row = document.order.firstIndex(of: cell.blockId),
 			   let block = document.block(id: cell.blockId),
@@ -1780,6 +1805,9 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         
         let currentText = cell.textView.attributedText ?? NSAttributedString(string: "")
         document.updateText(blockId: cell.blockId, text: currentText)
+        // Enter/split, backspace-merge and divider inserts all reshape the block
+        // graph — snapshot before they run so ⌘Z can bring the structure back.
+        registerStructuralUndo(actionName: "Edit Blocks")
 		let oldOrder = document.order
         
         let currentRange = cell.textView.selectedRange
@@ -2121,6 +2149,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	}
 
 	private func insertMediaBlock(kind: MediaBlockKind, reference: String, afterBlockId: String) {
+		registerStructuralUndo(actionName: "Insert Media")
 		let media = Block(content: .media(MediaBlock(kind: kind, reference: reference, displayStyle: .medium)))
 		let mediaId = document.insert(media, after: afterBlockId)
 		let trailingText = Block(content: .text(TextBlock(text: NSAttributedString(string: ""), style: .text)))
@@ -2163,6 +2192,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 
 	private func insertDroppedImageData(_ data: Data, at row: Int) {
 		guard let reference = persistPickedImageData(data: data) else { return }
+		registerStructuralUndo(actionName: "Drop Image")
 		let media = Block(content: .media(MediaBlock(kind: .image, reference: reference, displayStyle: .medium)))
 		let clamped = max(0, min(row, document.order.count))
 		_ = document.insert(media, at: clamped)
