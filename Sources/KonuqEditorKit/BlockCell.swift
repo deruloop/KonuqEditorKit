@@ -792,6 +792,12 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 			carry(.appInlineLinkUrl)
 			carry(.appInlineNoteLinkId)
 		}
+		// A freshly typed character must NEVER inherit the auto-link marker: the
+		// detection pass would then find a marked range it has to clean up, decide
+		// the string changed and reassign attributedText mid-keystroke — which
+		// resets the text input session and duplicates what you are typing.
+		// Detection re-applies the marker itself when the character is part of a link.
+		typing.removeValue(forKey: .appInlineAutoLink)
 
         carry(.appInlineBold)
         carry(.appInlineItalic)
@@ -2470,6 +2476,11 @@ private extension BlockCell {
 
 	func applyInlineLinkAttributesIfNeeded(preservingSelection selection: NSRange) {
 		guard style != .code else { return }
+		// Never rewrite the string while the input system is composing (marked text
+		// from predictive input, dictation or an IME): reassigning attributedText
+		// there tears down the session and can duplicate characters. The pass runs
+		// again as soon as composition commits.
+		guard textView.markedTextRange == nil else { return }
 		guard let current = textView.attributedText else { return }
 		guard current.length > 0 else { return }
 
