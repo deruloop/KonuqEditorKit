@@ -860,6 +860,11 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         }
         let orderIds = blocks.map { $0.id }
         document.replaceAll(blocks: blocks, order: orderIds)
+        // Notes whose last block is media (dropped image, share extension) get a
+        // trailing text row so there is always somewhere to write.
+        if ensureTrailingTextBlock() {
+            scheduleBlocksChanged(immediate: true)
+        }
 
 		if autoFocusOnAppear {
 			if document.order.isEmpty {
@@ -2224,12 +2229,25 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		}
 	}
 
+	/// A note must never END on a media block: there would be no row to tap and no
+	/// way to keep writing under it. The picker already appends one; drops, pastes
+	/// and notes arriving from the share extension did not.
+	@discardableResult
+	private func ensureTrailingTextBlock() -> Bool {
+		guard let lastId = document.order.last, let last = document.block(id: lastId) else { return false }
+		guard case .media = last.content else { return false }
+		let trailing = Block(content: .text(TextBlock(text: NSAttributedString(string: ""), style: .text)))
+		_ = document.insert(trailing, after: lastId)
+		return true
+	}
+
 	private func insertDroppedImageData(_ data: Data, at row: Int) {
 		guard let reference = persistPickedImageData(data: data) else { return }
 		registerStructuralUndo(actionName: "Drop Image")
 		let media = Block(content: .media(MediaBlock(kind: .image, reference: reference, displayStyle: .medium)))
 		let clamped = max(0, min(row, document.order.count))
 		_ = document.insert(media, at: clamped)
+		ensureTrailingTextBlock()
 		tableView.reloadData()
 		scheduleBlocksChanged(immediate: true)
 	}
