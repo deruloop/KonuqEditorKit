@@ -12,6 +12,8 @@ private extension NSAttributedString.Key {
 	static let appInlineStrike = NSAttributedString.Key("app.inline.strike")
 	static let appInlineLinkUrl = NSAttributedString.Key("app.inline.link.url")
 	static let appInlineNoteLinkId = NSAttributedString.Key("app.inline.note.link.id")
+	/// Presentation-only strike applied to a checked checkbox (mirrors BlockCell).
+	static let appInlineCheckboxAutoStrike = NSAttributedString.Key("app.inline.checkbox.auto.strike")
 }
 
 final class BlocksEditorViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UITableViewDragDelegate, UITableViewDropDelegate, UIGestureRecognizerDelegate, BlockCellDelegate, MediaBlockCellDelegate, PHPickerViewControllerDelegate {
@@ -1431,7 +1433,12 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
                 isMono: storedCode || isMonospaced(font),
                 isBold: storedBold || ((weight - baseWeight) > 0.12) || (baseWeight < UIFont.Weight.semibold.rawValue && weight >= UIFont.Weight.semibold.rawValue) || ((traits.contains(.traitBold) && !baseTraits.contains(.traitBold)) || (isNamedBold(name) && !isNamedBold(baseName))),
                 isItalic: storedItalic || (abs(slant) > 0.01 && abs(baseSlant) <= 0.01) || ((traits.contains(.traitItalic) && !baseTraits.contains(.traitItalic)) || (isNamedItalic(name) && !isNamedItalic(baseName))),
-                isStrike: storedStrike || (attrs[.strikethroughStyle] != nil)
+                // A checked checkbox strikes its text for presentation only: never
+                // serialize that as ~~…~~, or the strike becomes real content and
+                // unchecking the box can no longer remove it.
+                isStrike: boolAttr(attrs, .appInlineCheckboxAutoStrike)
+                    ? false
+                    : (storedStrike || (attrs[.strikethroughStyle] != nil))
             )
 
             if let lastKey, lastKey == key {
@@ -2552,7 +2559,16 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         if let indexPath = nearestRowIndexPath(to: location) {
             let blockId = document.order[indexPath.row]
             guard let block = document.block(id: blockId) else { return }
-            if case .media = block.content { return } // leave taps around media alone
+            if case .media = block.content {
+                // A tap ON the media itself belongs to the media cell. A tap in the
+                // gap around it means "write here": focus() moves to the next text
+                // block, creating one when the media is the last row — otherwise
+                // there is no way to start writing under a trailing image.
+                let rowFrame = tableView.rectForRow(at: indexPath)
+                if rowFrame.insetBy(dx: 0, dy: 2).contains(location) { return }
+                focus(blockId: blockId)
+                return
+            }
             focusTextCell(at: indexPath, blockId: blockId, tapLocation: location)
             return
         }
