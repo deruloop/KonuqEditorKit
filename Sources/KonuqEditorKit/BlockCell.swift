@@ -27,40 +27,40 @@ final class BlocksEditorTextView: UITextView {
 		var commands: [UIKeyCommand] = []
 
 		let bold = UIKeyCommand(input: "b", modifierFlags: .command, action: #selector(handleCommandBold))
-		bold.discoverabilityTitle = "Bold"
+		bold.discoverabilityTitle = L.t("editor.bold")
 		if #available(iOS 15.0, *) { bold.wantsPriorityOverSystemBehavior = true }
 		commands.append(bold)
 
 		let italic = UIKeyCommand(input: "i", modifierFlags: .command, action: #selector(handleCommandItalic))
-		italic.discoverabilityTitle = "Italic"
+		italic.discoverabilityTitle = L.t("editor.italic")
 		if #available(iOS 15.0, *) { italic.wantsPriorityOverSystemBehavior = true }
 		commands.append(italic)
 
 		let undo = UIKeyCommand(input: "z", modifierFlags: .command, action: #selector(handleUndoCommand))
-		undo.discoverabilityTitle = "Undo"
+		undo.discoverabilityTitle = L.t("editor.undo")
 		if #available(iOS 15.0, *) { undo.wantsPriorityOverSystemBehavior = true }
 		commands.append(undo)
 
 		let redo = UIKeyCommand(input: "z", modifierFlags: [.command, .shift], action: #selector(handleRedoCommand))
-		redo.discoverabilityTitle = "Redo"
+		redo.discoverabilityTitle = L.t("editor.redo")
 		if #available(iOS 15.0, *) { redo.wantsPriorityOverSystemBehavior = true }
 		commands.append(redo)
 
 		if isMacRuntime() {
 			let textBlock = UIKeyCommand(input: "b", modifierFlags: [.command, .shift], action: #selector(handleCommandMakeTextBlock))
-			textBlock.discoverabilityTitle = "Text block"
+			textBlock.discoverabilityTitle = L.t("editor.block.text")
 			commands.append(textBlock)
 
 			let titleBlock = UIKeyCommand(input: "t", modifierFlags: [.command, .shift], action: #selector(handleCommandMakeTitleBlock))
-			titleBlock.discoverabilityTitle = "Title block"
+			titleBlock.discoverabilityTitle = L.t("editor.block.title")
 			commands.append(titleBlock)
 
 			let headerBlock = UIKeyCommand(input: "h", modifierFlags: [.command, .shift], action: #selector(handleCommandMakeHeaderBlock))
-			headerBlock.discoverabilityTitle = "Header block"
+			headerBlock.discoverabilityTitle = L.t("editor.block.header")
 			commands.append(headerBlock)
 
 			let paragraphBlock = UIKeyCommand(input: "j", modifierFlags: [.command, .shift], action: #selector(handleCommandMakeParagraphBlock))
-			paragraphBlock.discoverabilityTitle = "Paragraph block"
+			paragraphBlock.discoverabilityTitle = L.t("editor.block.paragraph")
 			commands.append(paragraphBlock)
 
 			let sel = selectedRange
@@ -436,7 +436,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		tap.cancelsTouchesInView = false
 		textView.addGestureRecognizer(tap)
 
-        placeholderLabel.text = "Start typing…"
+        placeholderLabel.text = L.t("editor.placeholder")
         placeholderLabel.textColor = .placeholderText
         placeholderLabel.numberOfLines = 1
         placeholderLabel.adjustsFontForContentSizeCategory = true
@@ -2075,7 +2075,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 			locationButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 		}
 
-		doneButton.setTitle("Done", for: .normal)
+		doneButton.setTitle(L.t("editor.done"), for: .normal)
 		doneButton.titleLabel?.font = UIFont.preferredFont(forTextStyle: .headline)
 		doneButton.titleLabel?.adjustsFontForContentSizeCategory = true
 		doneButton.setTitleColor(.appAccent, for: .normal)

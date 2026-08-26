@@ -171,21 +171,21 @@ final class MediaBlockCell: UITableViewCell, BlockSelectableCell {
 
 	private func makeStyleMenu() -> UIMenu {
 		let actionSmall = UIAction(
-			title: "Small",
+			title: L.t("editor.media.small"),
 			state: displayStyle == .small ? .on : .off
 		) { [weak self] _ in
 			self?.applyDisplayStyle(.small)
 		}
 
 		let actionMedium = UIAction(
-			title: "Medium",
+			title: L.t("editor.media.medium"),
 			state: displayStyle == .medium ? .on : .off
 		) { [weak self] _ in
 			self?.applyDisplayStyle(.medium)
 		}
 
 		let actionLarge = UIAction(
-			title: "Large",
+			title: L.t("editor.media.large"),
 			state: displayStyle == .large ? .on : .off
 		) { [weak self] _ in
 			self?.applyDisplayStyle(.large)

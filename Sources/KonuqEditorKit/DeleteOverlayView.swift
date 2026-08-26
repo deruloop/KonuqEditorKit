@@ -23,7 +23,7 @@ final class SelectionActionBarView: UIView {
         titleLabel.font = UIFont.preferredFont(forTextStyle: .subheadline)
         titleLabel.textColor = .secondaryLabel
         
-        deleteButton.setTitle("Delete", for: .normal)
+        deleteButton.setTitle(L.t("editor.delete"), for: .normal)
         deleteButton.setTitleColor(.systemRed, for: .normal)
         deleteButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
         deleteButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)

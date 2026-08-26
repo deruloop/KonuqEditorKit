@@ -2292,7 +2292,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     }
     
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-        let delete = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, completion in
+        let delete = UIContextualAction(style: .destructive, title: L.t("editor.delete")) { [weak self] _, _, completion in
             guard let self else { return }
             let id = self.document.order[indexPath.row]
             self.document.remove(blockId: id)

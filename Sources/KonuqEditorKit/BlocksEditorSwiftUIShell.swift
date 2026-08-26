@@ -153,7 +153,7 @@ public struct BlocksEditorSwiftUIShellView: View {
 		.toolbar {
 			if model.isSelectionMode {
 				ToolbarItem(placement: .topBarTrailing) {
-					Button("Done") {
+					Button(L.t("editor.done")) {
 						model.done()
 					}
 				}
@@ -223,7 +223,7 @@ private struct SelectionActionBar: View {
 			Button {
 				onSelectAll()
 			} label: {
-				Label("Select All", systemImage: "checkmark.circle")
+				Label(L.t("editor.select_all"), systemImage: "checkmark.circle")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
 			}
@@ -233,7 +233,7 @@ private struct SelectionActionBar: View {
 			Button {
 				onCopy()
 			} label: {
-				Label("Copy", systemImage: "doc.on.doc")
+				Label(L.t("editor.copy"), systemImage: "doc.on.doc")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
 			}
@@ -243,7 +243,7 @@ private struct SelectionActionBar: View {
 			Button {
 				onCut()
 			} label: {
-				Label("Cut", systemImage: "scissors")
+				Label(L.t("editor.cut"), systemImage: "scissors")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
 			}
@@ -253,7 +253,7 @@ private struct SelectionActionBar: View {
 			Button {
 				onSend()
 			} label: {
-				Label("Send", systemImage: "arrowshape.turn.up.right")
+				Label(L.t("editor.send"), systemImage: "arrowshape.turn.up.right")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
 			}
@@ -263,7 +263,7 @@ private struct SelectionActionBar: View {
 			Button {
 				onDelete()
 			} label: {
-				Label("Delete", systemImage: "trash")
+				Label(L.t("editor.delete"), systemImage: "trash")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
 			}

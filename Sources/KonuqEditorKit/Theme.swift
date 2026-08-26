@@ -81,6 +81,12 @@ public extension KonuqEditorTheme {
 public enum KonuqEditor {
 	/// The active theme. Set on the main thread before presenting the editor. Defaults to `.konuq`.
 	public static var theme: KonuqEditorTheme = .konuq
+
+	/// Forces the language of the editor's own strings (e.g. "it", "pt-BR").
+	/// Leave nil to follow the system. Set this when the host app offers an
+	/// in-app language picker, otherwise the editor stays on the system language
+	/// while the rest of the app switches.
+	public static var preferredLanguageCode: String?
 }
 
 // The editor calls `UIFont.appSpaceGrotesk`/`appDMSans` throughout; route those through the
