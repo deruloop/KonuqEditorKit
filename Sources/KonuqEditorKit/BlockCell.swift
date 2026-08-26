@@ -736,6 +736,10 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 			var typing = textView.typingAttributes
 			typing[.font] = baseFont
 			typing.removeValue(forKey: .foregroundColor)
+			// The hidden "[ ] " prefix carries a negative kern to cancel its width;
+			// a typed character must never inherit it, or every glyph is pulled back
+			// over the previous one.
+			typing.removeValue(forKey: .kern)
 			textView.typingAttributes = typing
 			updateKeyboardAccessoryState()
 			return
@@ -798,6 +802,8 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		// resets the text input session and duplicates what you are typing.
 		// Detection re-applies the marker itself when the character is part of a link.
 		typing.removeValue(forKey: .appInlineAutoLink)
+		// Same for the checkbox prefix kern (see the checkbox branch above).
+		typing.removeValue(forKey: .kern)
 
         carry(.appInlineBold)
         carry(.appInlineItalic)
@@ -850,6 +856,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 					var typing = textView.typingAttributes
 					typing[.font] = baseFont
 					typing.removeValue(forKey: .foregroundColor)
+					typing.removeValue(forKey: .kern)
 					textView.typingAttributes = typing
 					applyStyle()
 					lastTextWasEmpty = true
@@ -883,6 +890,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 					var typing = textView.typingAttributes
 					typing[.font] = baseFont
 					typing.removeValue(forKey: .foregroundColor)
+					typing.removeValue(forKey: .kern)
 					textView.typingAttributes = typing
 					applyStyle()
 					lastTextWasEmpty = false
@@ -2312,6 +2320,10 @@ private extension BlockCell {
 			var typing = textView.typingAttributes
 			typing[.font] = baseFont
 			typing.removeValue(forKey: .foregroundColor)
+			// The hidden "[ ] " prefix carries a negative kern to cancel its width;
+			// a typed character must never inherit it, or every glyph is pulled back
+			// over the previous one.
+			typing.removeValue(forKey: .kern)
 			textView.typingAttributes = typing
 			checkboxButton.setImage(UIImage(systemName: "square"), for: .normal)
 			checkboxButton.tintColor = .appAccent
@@ -2458,6 +2470,7 @@ private extension BlockCell {
 		var typing = textView.typingAttributes
 		typing[.font] = baseFont
 		typing.removeValue(forKey: .foregroundColor)
+		typing.removeValue(forKey: .kern)
 
 		if updated.isEqual(current) {
 			if textView.selectedRange != newSelection {
