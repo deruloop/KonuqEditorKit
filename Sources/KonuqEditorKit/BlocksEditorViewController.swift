@@ -18,7 +18,6 @@ private extension NSAttributedString.Key {
 
 final class BlocksEditorViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UITableViewDragDelegate, UITableViewDropDelegate, UIGestureRecognizerDelegate, BlockCellDelegate, MediaBlockCellDelegate, PHPickerViewControllerDelegate {
     private let tableView = UITableView(frame: .zero, style: .plain)
-    private let canvasFooter = UIView()
     
     private let initialEmptyStyle: TextStyle
     private let document = Document()
@@ -212,15 +211,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         backgroundTap.cancelsTouchesInView = false
         tableView.addGestureRecognizer(backgroundTap)
 
-        // The white area below the last row is a real, dedicated tap target (the
-        // table footer, resized each layout pass to fill the visible remainder).
-        // The canvas-tap recognizer above competes with the table's own gestures
-        // and only covers points near a row — taps far below were slow or lost.
-        canvasFooter.backgroundColor = .clear
-        let footerTap = UITapGestureRecognizer(target: self, action: #selector(handleCanvasFooterTap))
-        canvasFooter.addGestureRecognizer(footerTap)
-        tableView.tableFooterView = canvasFooter
-
 		let nc = NotificationCenter.default
 		keyboardObservers.append(
 			nc.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] notification in
@@ -306,36 +296,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	override func viewDidLayoutSubviews() {
 		super.viewDidLayoutSubviews()
 		updateEditorInsets()
-		updateCanvasFooterHeight()
-	}
-
-	/// Stretches the footer so "tap anywhere in the empty space below the note"
-	/// always lands on it: rows + footer fill at least the visible viewport.
-	private func updateCanvasFooterHeight() {
-		let currentFooterHeight = tableView.tableFooterView?.frame.height ?? 0
-		let rowsHeight = tableView.contentSize.height - currentFooterHeight
-		let visibleHeight = view.bounds.height - keyboardHeight - tableView.contentInset.top
-		let desired = max(120, visibleHeight - rowsHeight)
-		if abs(desired - currentFooterHeight) > 1 {
-			canvasFooter.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: desired)
-			tableView.tableFooterView = canvasFooter
-		}
-	}
-
-	@objc private func handleCanvasFooterTap() {
-		guard isSelectionMode == false else { return }
-		// Last text row if there is one, a fresh row when the note ends on media
-		// (focus() creates it) — and a first row for a completely empty note.
-		if document.order.isEmpty {
-			let block = Block(content: .text(TextBlock(text: NSAttributedString(string: ""), style: .text)))
-			_ = document.insert(block, at: 0)
-			tableView.reloadData()
-			scheduleBlocksChanged(immediate: true)
-			pendingFocusBlockId = block.id
-			focusIfNeeded()
-		} else {
-			focusLastBlock()
-		}
 	}
 
 	private func updateEditorInsets() {
