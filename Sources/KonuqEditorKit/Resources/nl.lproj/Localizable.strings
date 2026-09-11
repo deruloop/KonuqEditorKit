@@ -16,3 +16,8 @@
 "editor.copy" = "Kopiëren";
 "editor.cut" = "Knippen";
 "editor.send" = "Sturen";
+"editor.link" = "Link";
+"editor.link.prompt.title" = "Link toevoegen";
+"editor.link.prompt.apply" = "Toevoegen";
+"editor.cancel" = "Annuleer";
+"editor.link.placeholder.text" = "tekst";

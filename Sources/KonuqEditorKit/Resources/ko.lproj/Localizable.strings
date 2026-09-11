@@ -16,3 +16,8 @@
 "editor.copy" = "복사";
 "editor.cut" = "오려두기";
 "editor.send" = "보내기";
+"editor.link" = "링크";
+"editor.link.prompt.title" = "링크 추가";
+"editor.link.prompt.apply" = "추가";
+"editor.cancel" = "취소";
+"editor.link.placeholder.text" = "텍스트";

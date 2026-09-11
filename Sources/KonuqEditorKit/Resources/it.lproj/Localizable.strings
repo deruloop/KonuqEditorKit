@@ -16,3 +16,8 @@
 "editor.copy" = "Copia";
 "editor.cut" = "Taglia";
 "editor.send" = "Invia";
+"editor.link" = "Link";
+"editor.link.prompt.title" = "Aggiungi link";
+"editor.link.prompt.apply" = "Aggiungi";
+"editor.cancel" = "Annulla";
+"editor.link.placeholder.text" = "testo";

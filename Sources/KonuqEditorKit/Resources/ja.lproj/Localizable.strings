@@ -16,3 +16,8 @@
 "editor.copy" = "コピー";
 "editor.cut" = "カット";
 "editor.send" = "送信";
+"editor.link" = "リンク";
+"editor.link.prompt.title" = "リンクを追加";
+"editor.link.prompt.apply" = "追加";
+"editor.cancel" = "キャンセル";
+"editor.link.placeholder.text" = "テキスト";

@@ -36,6 +36,11 @@ final class BlocksEditorTextView: UITextView {
 		if #available(iOS 15.0, *) { italic.wantsPriorityOverSystemBehavior = true }
 		commands.append(italic)
 
+		let link = UIKeyCommand(input: "k", modifierFlags: .command, action: #selector(handleCommandLink))
+		link.discoverabilityTitle = L.t("editor.link")
+		if #available(iOS 15.0, *) { link.wantsPriorityOverSystemBehavior = true }
+		commands.append(link)
+
 		let undo = UIKeyCommand(input: "z", modifierFlags: .command, action: #selector(handleUndoCommand))
 		undo.discoverabilityTitle = L.t("editor.undo")
 		if #available(iOS 15.0, *) { undo.wantsPriorityOverSystemBehavior = true }
@@ -92,6 +97,17 @@ final class BlocksEditorTextView: UITextView {
 			cell.delegate?.blockCell(cell, didPasteBlocks: snapshots)
 			return
 		}
+		// A bare URL pasted over selected text turns the selection into a link
+		// instead of replacing it (the way most editors treat ⌘V on a selection).
+		if selectedRange.length > 0,
+		   let cell = ownerCell,
+		   cell.supportsInlineLinks,
+		   pb.hasStrings,
+		   let string = pb.string,
+		   let url = BlockCell.pastedURL(from: string) {
+			cell.applyLink(url: url, to: selectedRange)
+			return
+		}
 		super.paste(sender)
 	}
 
@@ -117,6 +133,7 @@ final class BlocksEditorTextView: UITextView {
 
 	@objc private func handleCommandBold() { ownerCell?.toggleBold() }
 	@objc private func handleCommandItalic() { ownerCell?.toggleItalic() }
+	@objc private func handleCommandLink() { ownerCell?.insertLinkAction() }
 	@objc private func handleCommandMakeTextBlock() { ownerCell?.applyBlockStyleCommand(.text) }
 	@objc private func handleCommandMakeTitleBlock() { ownerCell?.applyBlockStyleCommand(.title) }
 	@objc private func handleCommandMakeHeaderBlock() { ownerCell?.applyBlockStyleCommand(.description) }
@@ -188,6 +205,10 @@ protocol BlockCellDelegate: AnyObject {
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode { get }
 	/// Whether the host wants the dedicated location button (insert a `📍 place` link).
 	var keyboardLocationButtonEnabled: Bool { get }
+	/// Whether the "Start typing…" placeholder may show at all: only while the note
+	/// is a single empty block. Once a second block exists the user has clearly
+	/// started, and an empty first row must not keep inviting them to.
+	var editorShowsPlaceholder: Bool { get }
 }
 
 protocol BlockSelectableCell: AnyObject {
@@ -467,6 +488,9 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
             onItalic: { [weak self] in
                 self?.toggleItalic()
             },
+			onLink: { [weak self] in
+				self?.insertLinkAction()
+			},
 			onCodeBlock: { [weak self] in
 				guard let self else { return }
 				guard self.style != .code else { return }
@@ -611,6 +635,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		applyInlineTagAttributesIfNeeded(preservingSelection: textView.selectedRange)
 		applyInlineLinkAttributesIfNeeded(preservingSelection: textView.selectedRange)
 		applyBaseTextAttributesIfNeeded()
+		clearLinkTypingAttributesIfEmpty()
         let newIsEmpty = textView.attributedText.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         lastTextWasEmpty = newIsEmpty
         updatePlaceholderVisibility()
@@ -624,9 +649,13 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     // what happens — e.g. apply the user's "which map app" choice. Without this, tapping a link
     // fired BOTH: the system opened it immediately AND our handler ran, so a location link went
     // straight to Apple Maps while the "ask" chooser also appeared.
+    //
+    // The replacement must be a real (no-op) action rather than nil: with no primary action
+    // UIKit treats a tap like a long press and pops the Open/Share menu on every tap. The
+    // menu stays reachable through an actual long press.
     func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
         if case .link = textItem.content {
-            return nil
+            return UIAction { _ in }
         }
         return defaultAction
     }
@@ -651,6 +680,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 			typing[.font] = resolvedBaseFontForCurrentStyle()
 			textView.typingAttributes = typing
 		}
+		clearLinkTypingAttributesIfEmpty()
         textView.reloadInputViews()
     }
 
@@ -685,7 +715,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		textView.selectedRange = target
 	}
 
-	private func clearEnforcedSelection() {
+	func clearEnforcedSelection() {
 		enforcedSelection = nil
 	}
 
@@ -706,6 +736,14 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		if isApplyingInlineTagAttributes { return }
 		if isApplyingInlineLinkAttributes { return }
 		if isApplyingBaseTextAttributes { return }
+		// Markdown links are left literal while the caret is inside them; the moment
+		// the caret moves out (a tap elsewhere, arrow keys) they must become links
+		// without waiting for the next keystroke.
+		if textView.markedTextRange == nil, textView.attributedText.string.contains("](") {
+			if applyInlineLinkAttributesIfNeeded(preservingSelection: textView.selectedRange) {
+				delegate?.blockCell(self, didChangeText: textView.attributedText)
+			}
+		}
 		if style == .checkbox {
 			let length = textView.attributedText.length
 			// Keep the selection out of the hidden "[ ] " prefix (first 4 chars) but
@@ -741,6 +779,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 			// over the previous one.
 			typing.removeValue(forKey: .kern)
 			textView.typingAttributes = typing
+			clearLinkTypingAttributesIfEmpty()
 			updateKeyboardAccessoryState()
 			return
 		}
@@ -750,6 +789,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 			var typing = textView.typingAttributes
 			typing[.font] = resolvedBaseFontForCurrentStyle()
 			textView.typingAttributes = typing
+			clearLinkTypingAttributesIfEmpty()
 			if isInlineTypingActive() {
 				applyTransientTypingAttributes()
 			} else {
@@ -787,7 +827,14 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
             }
         }
 
-		if hasLinkHere && isCaretAtLinkBoundary {
+		// A selection that reaches outside the link (select-all, drag across it) is
+		// about to be replaced by plain text: what is typed must not inherit the link.
+		let selectionSpillsOutOfLink: Bool = {
+			guard sel.length > 0, hasLinkHere, linkEffectiveRange.location != NSNotFound else { return false }
+			return sel.location < linkEffectiveRange.location || NSMaxRange(sel) > NSMaxRange(linkEffectiveRange)
+		}()
+
+		if hasLinkHere && (isCaretAtLinkBoundary || selectionSpillsOutOfLink) {
 			typing.removeValue(forKey: .link)
 			typing.removeValue(forKey: .appInlineLinkUrl)
 			typing.removeValue(forKey: .appInlineNoteLinkId)
@@ -1377,8 +1424,15 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 
     private func updatePlaceholderVisibility() {
         let isEmpty = textView.attributedText.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        placeholderLabel.isHidden = !isFirstBlock || !isEmpty || isSelectionMode
+		let documentAllows = delegate?.editorShowsPlaceholder ?? true
+        placeholderLabel.isHidden = !isFirstBlock || !isEmpty || isSelectionMode || !documentAllows
     }
+
+	/// Re-evaluates the placeholder after a structural change elsewhere in the note
+	/// (a block added below, or the note shrinking back to one block).
+	func refreshPlaceholderVisibility() {
+		updatePlaceholderVisibility()
+	}
 
 	private func isDividerBlock() -> Bool {
 		guard style == .text else { return false }
@@ -1442,6 +1496,191 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 			return
 		}
 		toggleInlineMarkup(kind: .italic, selection: selection)
+	}
+
+	// MARK: - Inline links
+
+	/// Links are inline formatting: code blocks and dividers never carry them.
+	var supportsInlineLinks: Bool {
+		style != .code && isDividerBlock() == false
+	}
+
+	/// The link button / ⌘K: with a selection, ask for the URL and link the selected
+	/// text; with a bare caret, drop the `[text](url)` markdown in with the label
+	/// placeholder selected so typing replaces it. The markdown stays literal while the
+	/// caret is inside it (see `applyInlineLinkAttributesIfNeeded`) and becomes a real
+	/// link as soon as the caret leaves.
+	func insertLinkAction() {
+		guard isSelectionMode == false else { return }
+		guard supportsInlineLinks else { return }
+		let selection = textView.selectedRange
+		if selection.length > 0 {
+			presentLinkPrompt(for: selection)
+			return
+		}
+		insertLinkPlaceholder(at: selection.location)
+	}
+
+	private func insertLinkPlaceholder(at location: Int) {
+		let current = textView.attributedText ?? NSAttributedString(string: "")
+		let insertAt = min(max(location, style == .checkbox ? min(4, current.length) : 0), current.length)
+		let label = L.t("editor.link.placeholder.text")
+		let placeholder = "[\(label)](url)"
+
+		var typing = textView.typingAttributes
+		typing[.font] = resolvedBaseFontForCurrentStyle()
+		for key in [NSAttributedString.Key.link, .appInlineLinkUrl, .appInlineNoteLinkId, .appInlineAutoLink, .kern, .foregroundColor] {
+			typing.removeValue(forKey: key)
+		}
+
+		let updated = NSMutableAttributedString(attributedString: current)
+		updated.replaceCharacters(in: NSRange(location: insertAt, length: 0), with: NSAttributedString(string: placeholder, attributes: typing))
+		let labelRange = NSRange(location: insertAt + 1, length: (label as NSString).length)
+
+		isApplyingInlineLinkAttributes = true
+		textView.attributedText = updated
+		textView.selectedRange = labelRange
+		isApplyingInlineLinkAttributes = false
+		textView.typingAttributes = typing
+
+		didExternallySetText(preservingSelection: labelRange)
+		delegate?.blockCell(self, didChangeText: textView.attributedText)
+	}
+
+	/// Asks for a URL and links `range` with it. The field is prefilled when the
+	/// selection already carries a link, so the same button also edits one.
+	private func presentLinkPrompt(for range: NSRange) {
+		guard let host = hostViewController() else { return }
+		guard let current = textView.attributedText, current.length > 0 else { return }
+		let bounded = NSIntersectionRange(range, NSRange(location: 0, length: current.length))
+		guard bounded.length > 0 else { return }
+
+		let existing: String? = {
+			let attrs = current.attributes(at: bounded.location, effectiveRange: nil)
+			if let s = attrs[.appInlineLinkUrl] as? String { return s }
+			if let u = attrs[.appInlineLinkUrl] as? URL { return u.absoluteString }
+			if let u = attrs[.link] as? URL { return u.absoluteString }
+			if let s = attrs[.link] as? String { return s }
+			return nil
+		}()
+
+		let alert = UIAlertController(title: L.t("editor.link.prompt.title"), message: nil, preferredStyle: .alert)
+		alert.addTextField { field in
+			field.placeholder = "https://example.com"
+			field.keyboardType = .URL
+			field.textContentType = .URL
+			field.autocapitalizationType = .none
+			field.autocorrectionType = .no
+			field.clearButtonMode = .whileEditing
+			field.returnKeyType = .done
+			field.text = existing
+		}
+
+		let refocus: (NSRange) -> Void = { [weak self] selection in
+			guard let self else { return }
+			guard self.isSelectionMode == false else { return }
+			self.textView.becomeFirstResponder()
+			self.enforceSelection(selection)
+			if selection.length > 0 { self.textView.selectedRange = selection }
+		}
+
+		alert.addAction(UIAlertAction(title: L.t("editor.cancel"), style: .cancel) { _ in
+			refocus(bounded)
+		})
+		let apply = UIAlertAction(title: L.t("editor.link.prompt.apply"), style: .default) { [weak self, weak alert] _ in
+			guard let self else { return }
+			let raw = alert?.textFields?.first?.text ?? ""
+			guard let url = BlockCell.normalizedURL(fromUserInput: raw) else {
+				refocus(bounded)
+				return
+			}
+			self.applyLink(url: url, to: bounded)
+		}
+		alert.addAction(apply)
+		alert.preferredAction = apply
+
+		var presenter = host
+		while let presented = presenter.presentedViewController { presenter = presented }
+		presenter.present(alert, animated: true)
+	}
+
+	/// Marks `range` as an external inline link to `url` and leaves the caret right
+	/// after it, so what is typed next is plain text.
+	func applyLink(url: URL, to range: NSRange) {
+		guard supportsInlineLinks else { return }
+		guard let current = textView.attributedText, current.length > 0 else { return }
+		let bounded = NSIntersectionRange(range, NSRange(location: 0, length: current.length))
+		guard bounded.length > 0 else { return }
+
+		let updated = NSMutableAttributedString(attributedString: current)
+		updated.removeAttribute(.appInlineAutoLink, range: bounded)
+		updated.removeAttribute(.appInlineNoteLinkId, range: bounded)
+		updated.removeAttribute(.appInlineLinkHidden, range: bounded)
+		updated.addAttribute(.link, value: url, range: bounded)
+		updated.addAttribute(.appInlineLinkUrl, value: url.absoluteString, range: bounded)
+
+		let caret = NSRange(location: NSMaxRange(bounded), length: 0)
+		isApplyingInlineLinkAttributes = true
+		textView.attributedText = updated
+		textView.selectedRange = caret
+		isApplyingInlineLinkAttributes = false
+
+		var typing = textView.typingAttributes
+		typing.removeValue(forKey: .link)
+		typing.removeValue(forKey: .appInlineLinkUrl)
+		typing.removeValue(forKey: .appInlineNoteLinkId)
+		typing.removeValue(forKey: .appInlineAutoLink)
+		textView.typingAttributes = typing
+
+		if textView.isFirstResponder == false {
+			textView.becomeFirstResponder()
+		}
+		enforceSelection(caret)
+		didExternallySetText(preservingSelection: caret)
+		refreshTextRendering(around: bounded.location)
+		delegate?.blockCell(self, didChangeText: textView.attributedText)
+	}
+
+	/// What the user typed into the link prompt, as a URL: trimmed, and given an
+	/// `https://` scheme when none was written. Nil when it cannot be a link.
+	static func normalizedURL(fromUserInput raw: String) -> URL? {
+		let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard trimmed.isEmpty == false else { return nil }
+		guard trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
+		if trimmed.contains("://") || trimmed.lowercased().hasPrefix("mailto:") || trimmed.lowercased().hasPrefix("tel:") {
+			return URL(string: trimmed)
+		}
+		if trimmed.contains("@"), trimmed.contains(".") {
+			return URL(string: "mailto:\(trimmed)")
+		}
+		guard trimmed.contains(".") else { return nil }
+		return URL(string: "https://\(trimmed)")
+	}
+
+	/// A pasted string that is exactly one URL (with or without a scheme), or nil.
+	static func pastedURL(from string: String) -> URL? {
+		let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard trimmed.isEmpty == false else { return nil }
+		guard trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
+		if trimmed.contains("://") || trimmed.lowercased().hasPrefix("mailto:") {
+			guard let url = URL(string: trimmed), url.scheme != nil else { return nil }
+			let scheme = url.scheme?.lowercased() ?? ""
+			guard scheme == "http" || scheme == "https" || scheme == "mailto" || scheme == "konuq" else { return nil }
+			return url
+		}
+		let matches = autoLinkMatches(in: trimmed)
+		guard matches.count == 1, let only = matches.first else { return nil }
+		guard only.range.location == 0, only.range.length == (trimmed as NSString).length else { return nil }
+		return only.url
+	}
+
+	private func hostViewController() -> UIViewController? {
+		var responder: UIResponder? = self
+		while let current = responder {
+			if let controller = current as? UIViewController { return controller }
+			responder = current.next
+		}
+		return nil
 	}
 
 	func setInlineTypingModes(bold: Bool, italic: Bool) {
@@ -1616,6 +1855,24 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
         updateKeyboardAccessoryState()
     }
 
+	/// Once a block is emptied the text view keeps the typing attributes of whatever
+	/// was deleted last. If that was a link, the first character typed back inherits
+	/// the link url and the link pass then re-derives a real link from it, so the
+	/// word starts underlined. Strip every link-related key when there is no text.
+	private func clearLinkTypingAttributesIfEmpty() {
+		let visibleLength: Int = {
+			let length = textView.attributedText?.length ?? 0
+			return style == .checkbox ? max(0, length - 4) : length
+		}()
+		guard visibleLength == 0 else { return }
+		var typing = textView.typingAttributes
+		var changed = false
+		for key in [NSAttributedString.Key.link, .appInlineLinkUrl, .appInlineNoteLinkId, .appInlineAutoLink, .appInlineLinkHidden, .underlineStyle, .underlineColor, .foregroundColor] {
+			if typing.removeValue(forKey: key) != nil { changed = true }
+		}
+		if changed { textView.typingAttributes = typing }
+	}
+
     private func enforcePlainTypingAfterWhitespaceIfNeeded() {
         guard style != .code else { return }
         guard transientBoldMode == false, transientItalicMode == false else { return }
@@ -1687,6 +1944,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
             isBoldSelected: transientBoldMode,
             isItalicSelected: transientItalicMode,
             isFormattingEnabled: style != .code && !isDivider,
+			isLinkEnabled: supportsInlineLinks,
 			isPasteEnabled: UIPasteboard.general.hasStrings,
 			isCodeBlockEnabled: style != .code && !isDivider,
 			isCheckboxEnabled: style != .code && !isDivider,
@@ -1941,6 +2199,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
     private let onHash: () -> Void
     private let onBold: () -> Void
     private let onItalic: () -> Void
+	private let onLink: () -> Void
 	private let onCodeBlock: () -> Void
 	private let onCheckbox: () -> Void
 	private let onDivider: () -> Void
@@ -1955,6 +2214,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
     private let hashButton = UIButton(type: .system)
     private let boldButton = UIButton(type: .system)
     private let italicButton = UIButton(type: .system)
+	private let linkButton = UIButton(type: .system)
 	private let codeButton = UIButton(type: .system)
 	private let checkboxButton = UIButton(type: .system)
 	private let dividerButton = UIButton(type: .system)
@@ -1970,6 +2230,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
         onHash: @escaping () -> Void,
         onBold: @escaping () -> Void,
         onItalic: @escaping () -> Void,
+		onLink: @escaping () -> Void,
 		onCodeBlock: @escaping () -> Void,
 		onCheckbox: @escaping () -> Void,
 		onDivider: @escaping () -> Void,
@@ -1982,6 +2243,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
         self.onHash = onHash
         self.onBold = onBold
         self.onItalic = onItalic
+		self.onLink = onLink
 		self.onCodeBlock = onCodeBlock
 		self.onCheckbox = onCheckbox
 		self.onDivider = onDivider
@@ -2052,6 +2314,8 @@ private final class KeyboardActionAccessoryView: UIInputView {
         configureButton(hashButton, title: "#", systemImageName: nil, action: #selector(didTapHash))
         configureButton(boldButton, title: "B", systemImageName: nil, action: #selector(didTapBold))
         configureButton(italicButton, title: "I", systemImageName: nil, action: #selector(didTapItalic))
+		configureButton(linkButton, title: nil, systemImageName: "link", action: #selector(didTapLink))
+		linkButton.accessibilityLabel = L.t("editor.link")
 		configureButton(codeButton, title: nil, systemImageName: "chevron.left.forwardslash.chevron.right", action: #selector(didTapCodeBlock))
 		configureButton(checkboxButton, title: nil, systemImageName: "checkmark.square", action: #selector(didTapCheckbox))
 		configureButton(dividerButton, title: nil, systemImageName: "minus", action: #selector(didTapDivider))
@@ -2076,6 +2340,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 		if let config = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold) as UIImage.SymbolConfiguration? {
 			mediaButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 			pasteButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
+			linkButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 			codeButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 			checkboxButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
 			dividerButton.setPreferredSymbolConfiguration(config, forImageIn: .normal)
@@ -2100,6 +2365,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
         stackView.addArrangedSubview(hashButton)
         stackView.addArrangedSubview(boldButton)
         stackView.addArrangedSubview(italicButton)
+		stackView.addArrangedSubview(linkButton)
 		stackView.addArrangedSubview(codeButton)
 		stackView.addArrangedSubview(checkboxButton)
 		stackView.addArrangedSubview(dividerButton)
@@ -2112,6 +2378,7 @@ private final class KeyboardActionAccessoryView: UIInputView {
 			isBoldSelected: false,
 			isItalicSelected: false,
 			isFormattingEnabled: true,
+			isLinkEnabled: true,
 			isPasteEnabled: UIPasteboard.general.hasStrings,
 			isCodeBlockEnabled: true,
 			isCheckboxEnabled: true,
@@ -2135,15 +2402,17 @@ private final class KeyboardActionAccessoryView: UIInputView {
         CGSize(width: targetSize.width, height: 50)
     }
 
-    func setState(isBoldSelected: Bool, isItalicSelected: Bool, isFormattingEnabled: Bool, isPasteEnabled: Bool, isCodeBlockEnabled: Bool, isCheckboxEnabled: Bool, isDividerEnabled: Bool) {
+    func setState(isBoldSelected: Bool, isItalicSelected: Bool, isFormattingEnabled: Bool, isLinkEnabled: Bool, isPasteEnabled: Bool, isCodeBlockEnabled: Bool, isCheckboxEnabled: Bool, isDividerEnabled: Bool) {
         boldButton.isEnabled = isFormattingEnabled
         italicButton.isEnabled = isFormattingEnabled
+		linkButton.isEnabled = isLinkEnabled
 		codeButton.isEnabled = isCodeBlockEnabled
 		checkboxButton.isEnabled = isCheckboxEnabled
 		dividerButton.isEnabled = isDividerEnabled
 		pasteButton.isEnabled = isPasteEnabled
         applySelectionStyle(to: boldButton, selected: isBoldSelected)
         applySelectionStyle(to: italicButton, selected: isItalicSelected)
+		applySelectionStyle(to: linkButton, selected: false)
 		applySelectionStyle(to: codeButton, selected: false)
 		applySelectionStyle(to: checkboxButton, selected: false)
 		applySelectionStyle(to: dividerButton, selected: false)
@@ -2228,6 +2497,11 @@ private final class KeyboardActionAccessoryView: UIInputView {
     private func didTapItalic() {
         onItalic()
     }
+
+	@objc
+	private func didTapLink() {
+		onLink()
+	}
 
 	@objc
 	private func didTapCodeBlock() {
@@ -2423,6 +2697,17 @@ private extension BlockCell {
 		let prefixRange = NSRange(location: 0, length: min(prefixLen, updated.length))
 
 		if prefixRange.length > 0 {
+			// The prefix is inserted with `replaceCharacters`, so it inherits the
+			// attributes of the first visible character. Formatting on the hidden
+			// prefix would serialize as "**[ ] text**", which no checkbox parser
+			// (web, previews) recognises: strip every inline flag before hiding it.
+			let inlineKeys: [NSAttributedString.Key] = [
+				.appInlineBold, .appInlineItalic, .appInlineStrike, .appInlineCode,
+				.strikethroughStyle, .link, .appInlineLinkUrl, .appInlineNoteLinkId, .appInlineTagName
+			]
+			for key in inlineKeys {
+				updated.removeAttribute(key, range: prefixRange)
+			}
 			let baseFont = textView.font ?? UIFont.systemFont(ofSize: 17)
 			let tinyFont = baseFont.withSize(0.1)
 
@@ -2487,15 +2772,17 @@ private extension BlockCell {
 		isApplyingInlineChecklistAttributes = false
 	}
 
-	func applyInlineLinkAttributesIfNeeded(preservingSelection selection: NSRange) {
-		guard style != .code else { return }
+	/// Returns true when the text was rewritten (markdown consumed, link attributes changed).
+	@discardableResult
+	func applyInlineLinkAttributesIfNeeded(preservingSelection selection: NSRange) -> Bool {
+		guard style != .code else { return false }
 		// Never rewrite the string while the input system is composing (marked text
 		// from predictive input, dictation or an IME): reassigning attributedText
 		// there tears down the session and can duplicate characters. The pass runs
 		// again as soon as composition commits.
-		guard textView.markedTextRange == nil else { return }
-		guard let current = textView.attributedText else { return }
-		guard current.length > 0 else { return }
+		guard textView.markedTextRange == nil else { return false }
+		guard let current = textView.attributedText else { return false }
+		guard current.length > 0 else { return false }
 
 		let updated = NSMutableAttributedString(attributedString: current)
 		let fullRange = NSRange(location: 0, length: updated.length)
@@ -2601,16 +2888,30 @@ private extension BlockCell {
 
 		let ns = updated.string as NSString
 		let matches = BlockCell.markdownLinkRegex.matches(in: updated.string, options: [], range: NSRange(location: 0, length: ns.length))
+		let isEditing = textView.isFirstResponder
 		for match in matches.reversed() {
 			guard match.numberOfRanges >= 3 else { continue }
 			let full = match.range(at: 0)
+			// While the caret (or a selection) sits INSIDE `[label](url)` the user is still
+			// writing it — e.g. filling the placeholders the link button inserted — so
+			// leave the markdown literal; it converts as soon as the caret moves out.
+			if isEditing,
+			   newSelection.location < NSMaxRange(full),
+			   NSMaxRange(newSelection) > full.location {
+				continue
+			}
 			let labelRange = match.range(at: 1)
 			let urlRange = match.range(at: 2)
 			guard labelRange.location != NSNotFound, labelRange.length > 0 else { continue }
 			guard urlRange.location != NSNotFound, urlRange.length > 0 else { continue }
 
 			let urlString = ns.substring(with: urlRange)
-			let url = URL(string: urlString) ?? URL(string: "https://\(urlString)")
+			// A bare host ("konuq.app") parses as a scheme-less URL nothing can open:
+			// treat it as https like the auto-link detector does.
+			let url: URL? = {
+				if let parsed = URL(string: urlString), parsed.scheme != nil { return parsed }
+				return URL(string: "https://\(urlString)")
+			}()
 			guard let url else { continue }
 
 			let replacement = NSMutableAttributedString(attributedString: updated.attributedSubstring(from: labelRange))
@@ -2643,7 +2944,7 @@ private extension BlockCell {
 			updated.addAttribute(.appInlineAutoLink, value: true, range: range)
 		}
 
-		if updated.isEqual(current) { return }
+		if updated.isEqual(current) { return false }
 
 		isApplyingInlineLinkAttributes = true
 		textView.attributedText = updated
@@ -2654,6 +2955,7 @@ private extension BlockCell {
 			textView.selectedRange = clamped
 		}
 		isApplyingInlineLinkAttributes = false
+		return true
 	}
 }
 

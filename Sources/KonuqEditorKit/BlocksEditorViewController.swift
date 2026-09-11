@@ -107,6 +107,11 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	private var dictationRange: NSRange?
 	private var persistentInlineBoldMode = false
 	private var persistentInlineItalicMode = false
+	/// Where the caret was when a host sheet (link to note, location search) took
+	/// over. Its search field steals first responder, so by the time the host calls
+	/// `insertText` nobody is editing any more; without this the text lands at the
+	/// end of the note instead of where the user was.
+	private var hostSheetCaret: (blockId: String, location: Int)?
     
     var onSelectionStateChange: ((Bool, Int) -> Void)?
     var onBlocksChanged: (([EditorBlockSnapshot]) -> Void)?
@@ -127,6 +132,15 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	}
 
 	var keyboardLocationButtonEnabled: Bool { onInsertLocation != nil }
+
+	var editorShowsPlaceholder: Bool { document.order.count <= 1 }
+
+	/// The placeholder lives on the first cell but depends on the whole note (see
+	/// `editorShowsPlaceholder`), so every structural change re-checks it there.
+	private func refreshFirstBlockPlaceholder() {
+		guard let cell = tableView.cellForRow(at: IndexPath(row: 0, section: 0)) as? BlockCell else { return }
+		cell.refreshPlaceholderVisibility()
+	}
 
     init(initialEmptyStyle: TextStyle = .text) {
         self.initialEmptyStyle = initialEmptyStyle
@@ -493,7 +507,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		   let cell = enclosingBlockCell(for: textView) {
 			afterId = cell.blockId
 			textView.resignFirstResponder()
+		} else if let caret = hostSheetCaret, document.block(id: caret.blockId) != nil {
+			afterId = caret.blockId
 		}
+		hostSheetCaret = nil
 
 		let newBlocks: [Block] = snapshots
 			.sorted { $0.position < $1.position }
@@ -658,14 +675,28 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		guard text.isEmpty == false else { return }
 		let root: UIView = view.window ?? view
 		if let textView = findFirstResponder(in: root) as? UITextView {
+			hostSheetCaret = nil
 			textView.insertText(text)
 			return
 		}
-		focusLastTextBlock()
+		// Nobody is editing: go back to where the user was when the host sheet opened,
+		// falling back to the end of the note only when that block is gone.
+		if let caret = hostSheetCaret, document.block(id: caret.blockId) != nil {
+			hostSheetCaret = nil
+			pendingFocusBlockId = caret.blockId
+			pendingFocusCursor = .position(caret.location)
+			focusIfNeeded()
+		} else {
+			hostSheetCaret = nil
+			focusLastTextBlock()
+		}
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
 			guard let self else { return }
 			let root: UIView = self.view.window ?? self.view
 			if let textView = self.findFirstResponder(in: root) as? UITextView {
+				// The focus above enforces the caret for a short window; lift it so the
+				// insertion can move the caret past the new text.
+				self.enclosingBlockCell(for: textView)?.clearEnforcedSelection()
 				textView.insertText(text)
 			}
 		}
@@ -922,6 +953,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     }
 
 	private func scheduleBlocksChanged(immediate: Bool = false) {
+		refreshFirstBlockPlaceholder()
 		blocksChangedWorkItem?.cancel()
 		if immediate {
 			onBlocksChanged?(snapshotBlocks())
@@ -1247,8 +1279,23 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         return attributed
     }
 
-    private func serializeInlineMarkdown(from attributed: NSAttributedString, style: TextStyle) -> String {
+    private func serializeInlineMarkdown(
+        from attributed: NSAttributedString,
+        style: TextStyle,
+        splitCheckboxPrefix: Bool = true
+    ) -> String {
         if style == .code { return attributed.string }
+
+        // The "[ ] " / "[x] " prefix of a checkbox is markup, not content. Emit it
+        // verbatim so inline formatting on the first word never wraps it
+        // ("**[ ] text**" is not a checkbox line for the web or the previews).
+        if splitCheckboxPrefix, style == .checkbox, attributed.length >= 4 {
+            let prefix = (attributed.string as NSString).substring(to: 4)
+            if prefix == "[ ] " || prefix.lowercased() == "[x] " {
+                let rest = attributed.attributedSubstring(from: NSRange(location: 4, length: attributed.length - 4))
+                return prefix + serializeInlineMarkdown(from: rest, style: style, splitCheckboxPrefix: false)
+            }
+        }
 
         struct Key: Equatable {
             let isMono: Bool
@@ -1652,8 +1699,9 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		case let .text(textBlock):
 			let cell = tableView.dequeueReusableCell(withIdentifier: BlockCell.reuseId, for: indexPath)
 			guard let blockCell = cell as? BlockCell else { return cell }
-			blockCell.configure(blockId: blockId, text: textBlock.text, style: textBlock.style, isFirstBlock: indexPath.row == 0)
+			// Delegate first: configure() consults it (placeholder, accessory state).
 			blockCell.delegate = self
+			blockCell.configure(blockId: blockId, text: textBlock.text, style: textBlock.style, isFirstBlock: indexPath.row == 0)
 			blockCell.isSelectionMode = isSelectionMode
 			return blockCell
 		case let .media(media):
@@ -1810,10 +1858,12 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			return
 		}
 		if action == .presentLinkToNoteSheet {
+			hostSheetCaret = (cell.blockId, cell.textView.selectedRange.location)
 			onLinkToNote?()
 			return
 		}
 		if action == .insertLocation {
+			hostSheetCaret = (cell.blockId, cell.textView.selectedRange.location)
 			onInsertLocation?()
 			return
 		}

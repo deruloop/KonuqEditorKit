@@ -16,3 +16,8 @@
 "editor.copy" = "拷贝";
 "editor.cut" = "剪切";
 "editor.send" = "发送";
+"editor.link" = "链接";
+"editor.link.prompt.title" = "添加链接";
+"editor.link.prompt.apply" = "添加";
+"editor.cancel" = "取消";
+"editor.link.placeholder.text" = "文本";

@@ -16,3 +16,8 @@
 "editor.copy" = "نسخ";
 "editor.cut" = "قص";
 "editor.send" = "إرسال";
+"editor.link" = "رابط";
+"editor.link.prompt.title" = "إضافة رابط";
+"editor.link.prompt.apply" = "إضافة";
+"editor.cancel" = "إلغاء";
+"editor.link.placeholder.text" = "نص";

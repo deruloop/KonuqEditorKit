@@ -16,3 +16,8 @@
 "editor.copy" = "Копировать";
 "editor.cut" = "Вырезать";
 "editor.send" = "Отправить";
+"editor.link" = "Ссылка";
+"editor.link.prompt.title" = "Добавить ссылку";
+"editor.link.prompt.apply" = "Добавить";
+"editor.cancel" = "Отмена";
+"editor.link.placeholder.text" = "текст";
