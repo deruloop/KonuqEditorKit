@@ -51,6 +51,13 @@ final class BlocksEditorTextView: UITextView {
 		if #available(iOS 15.0, *) { redo.wantsPriorityOverSystemBehavior = true }
 		commands.append(redo)
 
+		if selectedRange.length > 0 {
+			let copyMarkdown = UIKeyCommand(input: "c", modifierFlags: [.command, .shift], action: #selector(handleCommandCopyMarkdown))
+			copyMarkdown.discoverabilityTitle = L.t("editor.copy_markdown")
+			if #available(iOS 15.0, *) { copyMarkdown.wantsPriorityOverSystemBehavior = true }
+			commands.append(copyMarkdown)
+		}
+
 		if isMacRuntime() {
 			let textBlock = UIKeyCommand(input: "b", modifierFlags: [.command, .shift], action: #selector(handleCommandMakeTextBlock))
 			textBlock.discoverabilityTitle = L.t("editor.block.text")
@@ -84,6 +91,38 @@ final class BlocksEditorTextView: UITextView {
 		}
 
 		return commands
+	}
+
+	/// UITextView only writes plain text when `allowsEditingTextAttributes` is off,
+	/// so copy is done by hand: RTF + HTML carry bold/italic/strike/links and the
+	/// block's heading level, the plain form has no markup.
+	override func copy(_ sender: Any?) {
+		guard let cell = ownerCell, selectedRange.length > 0 else {
+			super.copy(sender)
+			return
+		}
+		let selection = attributedText.attributedSubstring(from: selectedRange)
+		let content = ClipboardExport.richContent(inline: selection, style: cell.blockStyle)
+		UIPasteboard.general.setItems([content.pasteboardItem()], options: [:])
+	}
+
+	override func cut(_ sender: Any?) {
+		guard selectedRange.length > 0, let range = selectedTextRange else {
+			super.cut(sender)
+			return
+		}
+		copy(sender)
+		// `replace` goes through shouldChangeTextIn like typing, so the cell's
+		// bookkeeping and the text view's undo stack both see the deletion.
+		replace(range, withText: "")
+	}
+
+	/// ⌘⇧C: the selection as inline markdown (`**bold**`, `[label](url)`), plain text.
+	@objc private func handleCommandCopyMarkdown() {
+		guard let cell = ownerCell, selectedRange.length > 0 else { return }
+		let selection = attributedText.attributedSubstring(from: selectedRange)
+		let markdown = cell.delegate?.blockCell(cell, markdownFor: selection) ?? selection.string
+		UIPasteboard.general.setItems([[EditorClipboard.plainText: markdown]], options: [:])
 	}
 
 	override func paste(_ sender: Any?) {
@@ -192,6 +231,8 @@ protocol BlockCellDelegate: AnyObject {
     func blockCell(_ cell: BlockCell, didChangeText text: NSAttributedString)
     func blockCell(_ cell: BlockCell, didTrigger action: KeyboardAction)
     func blockCell(_ cell: BlockCell, didPasteBlocks snapshots: [EditorBlockSnapshot])
+	/// Inline markdown for part of the cell's text (⌘⇧C copy as markdown).
+	func blockCell(_ cell: BlockCell, markdownFor text: NSAttributedString) -> String
 	func blockCell(_ cell: BlockCell, didTapURL url: URL)
 	/// Mac runtime: the cell hands its accessory bar over to be docked at the bottom
 	/// of the editor pane (inputAccessoryView would span the whole window there).
@@ -221,6 +262,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
     weak var delegate: BlockCellDelegate?
     private(set) var blockId: String = ""
     private var style: TextStyle = .text
+	var blockStyle: TextStyle { style }
     private var lastTextWasEmpty = true
     private var isFirstBlock = false
     

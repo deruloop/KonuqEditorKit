@@ -12,8 +12,12 @@
 "editor.media.small" = "Klein";
 "editor.media.medium" = "Middel";
 "editor.media.large" = "Groot";
+"editor.media.caption.placeholder" = "Bijschrift toevoegen…";
+"editor.media.add_photos" = "Foto's toevoegen…";
+"editor.media.remove_photo" = "Foto verwijderen";
 "editor.select_all" = "Alles selecteren";
 "editor.copy" = "Kopiëren";
+"editor.copy_markdown" = "Kopiëren als Markdown";
 "editor.cut" = "Knippen";
 "editor.send" = "Sturen";
 "editor.link" = "Link";

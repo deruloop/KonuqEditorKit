@@ -12,8 +12,12 @@
 "editor.media.small" = "小";
 "editor.media.medium" = "中";
 "editor.media.large" = "大";
+"editor.media.caption.placeholder" = "キャプションを追加…";
+"editor.media.add_photos" = "写真を追加…";
+"editor.media.remove_photo" = "写真を削除";
 "editor.select_all" = "すべて選択";
 "editor.copy" = "コピー";
+"editor.copy_markdown" = "Markdownとしてコピー";
 "editor.cut" = "カット";
 "editor.send" = "送信";
 "editor.link" = "リンク";

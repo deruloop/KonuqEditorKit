@@ -12,8 +12,12 @@
 "editor.media.small" = "小";
 "editor.media.medium" = "中";
 "editor.media.large" = "大";
+"editor.media.caption.placeholder" = "添加说明…";
+"editor.media.add_photos" = "添加照片…";
+"editor.media.remove_photo" = "移除照片";
 "editor.select_all" = "全选";
 "editor.copy" = "拷贝";
+"editor.copy_markdown" = "拷贝为 Markdown";
 "editor.cut" = "剪切";
 "editor.send" = "发送";
 "editor.link" = "链接";

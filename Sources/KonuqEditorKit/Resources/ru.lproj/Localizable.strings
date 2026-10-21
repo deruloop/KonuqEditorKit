@@ -12,8 +12,12 @@
 "editor.media.small" = "Маленький";
 "editor.media.medium" = "Средний";
 "editor.media.large" = "Большой";
+"editor.media.caption.placeholder" = "Добавить подпись…";
+"editor.media.add_photos" = "Добавить фото…";
+"editor.media.remove_photo" = "Удалить фото";
 "editor.select_all" = "Выбрать все";
 "editor.copy" = "Копировать";
+"editor.copy_markdown" = "Копировать как Markdown";
 "editor.cut" = "Вырезать";
 "editor.send" = "Отправить";
 "editor.link" = "Ссылка";

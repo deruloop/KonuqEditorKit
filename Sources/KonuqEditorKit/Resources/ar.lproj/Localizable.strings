@@ -12,8 +12,12 @@
 "editor.media.small" = "صغيرة";
 "editor.media.medium" = "متوسطة";
 "editor.media.large" = "كبيرة";
+"editor.media.caption.placeholder" = "أضف تعليقًا…";
+"editor.media.add_photos" = "أضف صورًا…";
+"editor.media.remove_photo" = "إزالة الصورة";
 "editor.select_all" = "تحديد الكل";
 "editor.copy" = "نسخ";
+"editor.copy_markdown" = "نسخ بصيغة Markdown";
 "editor.cut" = "قص";
 "editor.send" = "إرسال";
 "editor.link" = "رابط";

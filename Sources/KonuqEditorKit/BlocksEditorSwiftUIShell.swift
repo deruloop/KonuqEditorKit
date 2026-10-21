@@ -2,8 +2,58 @@ import SwiftUI
 
 public enum EditorBlockKind: Equatable, Codable {
 	case text(text: String, style: TextStyle)
-	case image(reference: String, displayStyle: MediaBlockDisplayStyle)
+	/// `caption` is markdown shown under the photo, italic and muted. Consecutive image
+	/// rows are one carousel in the editor; each row keeps its own caption.
+	case image(reference: String, displayStyle: MediaBlockDisplayStyle, caption: String = "")
 	case video(reference: String, displayStyle: MediaBlockDisplayStyle)
+
+	private enum CodingKeys: String, CodingKey { case text, image, video }
+	private enum TextKeys: String, CodingKey { case text, style }
+	private enum MediaKeys: String, CodingKey { case reference, displayStyle, caption }
+
+	/// Hand-written so snapshots stored before captions existed (Packd journals keep
+	/// them as JSON) still decode: a missing caption is an empty one.
+	public init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		if container.contains(.text) {
+			let nested = try container.nestedContainer(keyedBy: TextKeys.self, forKey: .text)
+			self = .text(text: try nested.decode(String.self, forKey: .text), style: try nested.decode(TextStyle.self, forKey: .style))
+			return
+		}
+		if container.contains(.image) {
+			let nested = try container.nestedContainer(keyedBy: MediaKeys.self, forKey: .image)
+			self = .image(
+				reference: try nested.decode(String.self, forKey: .reference),
+				displayStyle: try nested.decode(MediaBlockDisplayStyle.self, forKey: .displayStyle),
+				caption: try nested.decodeIfPresent(String.self, forKey: .caption) ?? ""
+			)
+			return
+		}
+		let nested = try container.nestedContainer(keyedBy: MediaKeys.self, forKey: .video)
+		self = .video(
+			reference: try nested.decode(String.self, forKey: .reference),
+			displayStyle: try nested.decode(MediaBlockDisplayStyle.self, forKey: .displayStyle)
+		)
+	}
+
+	public func encode(to encoder: Encoder) throws {
+		var container = encoder.container(keyedBy: CodingKeys.self)
+		switch self {
+		case let .text(text, style):
+			var nested = container.nestedContainer(keyedBy: TextKeys.self, forKey: .text)
+			try nested.encode(text, forKey: .text)
+			try nested.encode(style, forKey: .style)
+		case let .image(reference, displayStyle, caption):
+			var nested = container.nestedContainer(keyedBy: MediaKeys.self, forKey: .image)
+			try nested.encode(reference, forKey: .reference)
+			try nested.encode(displayStyle, forKey: .displayStyle)
+			try nested.encode(caption, forKey: .caption)
+		case let .video(reference, displayStyle):
+			var nested = container.nestedContainer(keyedBy: MediaKeys.self, forKey: .video)
+			try nested.encode(reference, forKey: .reference)
+			try nested.encode(displayStyle, forKey: .displayStyle)
+		}
+	}
 }
 
 public struct EditorBlockSnapshot: Equatable, Codable {
@@ -44,8 +94,8 @@ public final class BlocksEditorShellModel: ObservableObject {
         controller?.deleteSelectedBlocks()
     }
 
-	func copySelected() {
-		controller?.copySelectedBlocksToPasteboard()
+	func copySelected(format: EditorCopyFormat = .formatted) {
+		controller?.copySelectedBlocksToPasteboard(format: format)
 	}
 
 	func cutSelected() {
@@ -111,7 +161,9 @@ public struct BlocksEditorSwiftUIShellView: View {
 	var onLinkToNote: (() -> Void)? = nil
 	var onOpenURL: ((URL) -> Void)? = nil
 	var onInsertLocation: (() -> Void)? = nil
-	var onCopySelection: (() -> Void)? = nil
+	/// Fired after a copy from selection mode (button, ⌘C, ⌘⇧C, long-press menu) with
+	/// the format that was written, so the host can word its feedback.
+	var onCopySelection: ((EditorCopyFormat) -> Void)? = nil
 	var onCutSelection: (() -> Void)? = nil
 	var toolbarTrailing: AnyView? = nil
 
@@ -123,7 +175,7 @@ public struct BlocksEditorSwiftUIShellView: View {
 		onLinkToNote: (() -> Void)? = nil,
 		onOpenURL: ((URL) -> Void)? = nil,
 		onInsertLocation: (() -> Void)? = nil,
-		onCopySelection: (() -> Void)? = nil,
+		onCopySelection: ((EditorCopyFormat) -> Void)? = nil,
 		onCutSelection: (() -> Void)? = nil,
 		toolbarTrailing: AnyView? = nil
 	) {
@@ -183,10 +235,10 @@ public struct BlocksEditorSwiftUIShellView: View {
 					onSelectAll: {
 						model.selectAll()
 					},
-					onCopy: {
-						model.copySelected()
+					onCopy: { format in
+						model.copySelected(format: format)
 						model.done()
-						onCopySelection?()
+						onCopySelection?(format)
 					},
 					onCut: {
 						model.cutSelected()
@@ -213,7 +265,7 @@ private struct SelectionActionBar: View {
     let selectedCount: Int
 	let totalCount: Int
 	let onSelectAll: () -> Void
-	let onCopy: () -> Void
+	let onCopy: (EditorCopyFormat) -> Void
 	let onCut: () -> Void
 	let onSend: () -> Void
     let onDelete: () -> Void
@@ -230,13 +282,21 @@ private struct SelectionActionBar: View {
 			.buttonStyle(.plain)
 			.disabled(selectedCount == 0 || selectedCount == totalCount)
 
-			Button {
-				onCopy()
+			// Tap copies formatted text; press and hold offers the markdown source.
+			Menu {
+				Button {
+					onCopy(.markdown)
+				} label: {
+					Label(L.t("editor.copy_markdown"), systemImage: "number")
+				}
 			} label: {
 				Label(L.t("editor.copy"), systemImage: "doc.on.doc")
 					.labelStyle(.iconOnly)
 					.frame(width: 38, height: 34)
+			} primaryAction: {
+				onCopy(.formatted)
 			}
+			.menuStyle(.button)
 			.buttonStyle(.plain)
 			.disabled(selectedCount == 0)
 
@@ -295,7 +355,7 @@ private struct BlocksEditorViewControllerRepresentable: UIViewControllerRepresen
 	var onLinkToNote: (() -> Void)?
 	var onOpenURL: ((URL) -> Void)?
 	var onInsertLocation: (() -> Void)?
-	var onCopySelection: (() -> Void)?
+	var onCopySelection: ((EditorCopyFormat) -> Void)?
 	var onCutSelection: (() -> Void)?
 
     func makeUIViewController(context: Context) -> BlocksEditorViewController {

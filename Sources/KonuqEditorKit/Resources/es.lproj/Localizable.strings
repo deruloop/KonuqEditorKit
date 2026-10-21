@@ -12,8 +12,12 @@
 "editor.media.small" = "Pequeña";
 "editor.media.medium" = "Mediana";
 "editor.media.large" = "Grande";
+"editor.media.caption.placeholder" = "Añadir un pie de foto…";
+"editor.media.add_photos" = "Añadir fotos…";
+"editor.media.remove_photo" = "Quitar foto";
 "editor.select_all" = "Seleccionar todo";
 "editor.copy" = "Copiar";
+"editor.copy_markdown" = "Copiar como Markdown";
 "editor.cut" = "Cortar";
 "editor.send" = "Enviar";
 "editor.link" = "Enlace";

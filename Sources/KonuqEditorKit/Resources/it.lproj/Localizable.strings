@@ -12,8 +12,12 @@
 "editor.media.small" = "Piccola";
 "editor.media.medium" = "Media";
 "editor.media.large" = "Grande";
+"editor.media.caption.placeholder" = "Aggiungi una didascalia…";
+"editor.media.add_photos" = "Aggiungi foto…";
+"editor.media.remove_photo" = "Rimuovi foto";
 "editor.select_all" = "Seleziona tutto";
 "editor.copy" = "Copia";
+"editor.copy_markdown" = "Copia come Markdown";
 "editor.cut" = "Taglia";
 "editor.send" = "Invia";
 "editor.link" = "Link";

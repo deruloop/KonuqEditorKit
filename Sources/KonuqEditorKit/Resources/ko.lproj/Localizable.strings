@@ -12,8 +12,12 @@
 "editor.media.small" = "작게";
 "editor.media.medium" = "보통";
 "editor.media.large" = "크게";
+"editor.media.caption.placeholder" = "캡션 추가…";
+"editor.media.add_photos" = "사진 추가…";
+"editor.media.remove_photo" = "사진 삭제";
 "editor.select_all" = "전체 선택";
 "editor.copy" = "복사";
+"editor.copy_markdown" = "Markdown으로 복사";
 "editor.cut" = "오려두기";
 "editor.send" = "보내기";
 "editor.link" = "링크";

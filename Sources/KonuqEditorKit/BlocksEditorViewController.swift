@@ -30,7 +30,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     /// .start so the caret sits before the carried text; everything else keeps .end.
     private var pendingFocusCursor: FocusCursorPlacement = .end
 	private var pendingMediaInsertAfterBlockId: String?
-	private var pendingFullScreenImageReference: String?
+	/// Set when the picker was opened from a carousel's own menu: results join that block.
+	private var pendingMediaAppendToBlockId: String?
+	/// The carousel to show full screen once the keyboard is gone, and which photo first.
+	private var pendingFullScreenGallery: (items: [FullScreenGalleryItem], index: Int)?
 	private var pendingFullScreenImageAttempts = 0
 	private var pendingFullScreenVideoReference: String?
 	private var pendingFullScreenVideoAttempts = 0
@@ -67,12 +70,14 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 
         if isSelectionMode {
             let copy = UIKeyCommand(input: "c", modifierFlags: .command, action: #selector(handleSelectionCopyCommand))
+            let copyMarkdown = UIKeyCommand(input: "c", modifierFlags: [.command, .shift], action: #selector(handleSelectionCopyMarkdownCommand))
+            copyMarkdown.discoverabilityTitle = L.t("editor.copy_markdown")
             let cut = UIKeyCommand(input: "x", modifierFlags: .command, action: #selector(handleSelectionCutCommand))
             // Plain backspace: in selection mode no text view is editing, so it can't
             // clash with typing.
             let del = UIKeyCommand(input: "\u{8}", modifierFlags: [], action: #selector(handleSelectionDeleteCommand))
             let selectAll = UIKeyCommand(input: "a", modifierFlags: .command, action: #selector(handleSelectionSelectAllCommand))
-            commands.append(contentsOf: [copy, cut, del, selectAll])
+            commands.append(contentsOf: [copy, copyMarkdown, cut, del, selectAll])
         }
 
         for command in commands {
@@ -86,7 +91,12 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     @objc private func handleSelectionCopyCommand() {
         copySelectedBlocksToPasteboard()
         setSelectionMode(false)
-        onCopyShortcut?()
+        onCopyShortcut?(.formatted)
+    }
+    @objc private func handleSelectionCopyMarkdownCommand() {
+        copySelectedBlocksToPasteboard(format: .markdown)
+        setSelectionMode(false)
+        onCopyShortcut?(.markdown)
     }
     @objc private func handleSelectionCutCommand() {
         cutSelectedBlocksToPasteboard()
@@ -121,9 +131,9 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	/// Fired when the user manually edits the dictation target block mid-recording,
 	/// so the speech controller can reset its cumulative transcript.
 	var onDictationInterrupted: (() -> Void)?
-	/// Feedback hooks fired by the ⌘C/⌘X selection shortcuts, wired to the same
+	/// Feedback hooks fired by the ⌘C/⌘⇧C/⌘X selection shortcuts, wired to the same
 	/// closures as the selection-toolbar buttons (e.g. the "Copied" toast).
-	var onCopyShortcut: (() -> Void)?
+	var onCopyShortcut: ((EditorCopyFormat) -> Void)?
 	var onCutShortcut: (() -> Void)?
 
 	var keyboardTrailingButtonMode: KeyboardTrailingButtonMode {
@@ -512,9 +522,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		}
 		hostSheetCaret = nil
 
-		let newBlocks: [Block] = snapshots
-			.sorted { $0.position < $1.position }
-			.map { block(from: $0) }
+		let newBlocks: [Block] = blocks(fromSnapshots: snapshots)
 
 		var previousId = afterId
 		var lastInsertedTextId: String?
@@ -541,15 +549,64 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		}
 	}
 
-	private func block(from snapshot: EditorBlockSnapshot) -> Block {
-		switch snapshot.kind {
-		case let .text(text, style):
-			let attributed = style == .code ? NSAttributedString(string: text) : parseInlineMarkdown(text)
-			return Block(id: snapshot.id, content: .text(TextBlock(text: attributed, style: style)), parentId: nil, children: [])
-		case let .image(reference, displayStyle):
-			return Block(id: snapshot.id, content: .media(MediaBlock(kind: .image, reference: reference, displayStyle: displayStyle)), parentId: nil, children: [])
-		case let .video(reference, displayStyle):
-			return Block(id: snapshot.id, content: .media(MediaBlock(kind: .video, reference: reference, displayStyle: displayStyle)), parentId: nil, children: [])
+	/// Snapshots become editor blocks. Image rows that follow each other with nothing
+	/// in between fold into one carousel block: the first row lends the block its id
+	/// and style, every row keeps its own id and caption as an item, so the note
+	/// expands back to the same rows when it is saved.
+	private func blocks(fromSnapshots snapshots: [EditorBlockSnapshot]) -> [Block] {
+		let sorted = snapshots.sorted { a, b in
+			if a.position != b.position { return a.position < b.position }
+			return a.id < b.id
+		}
+		var result: [Block] = []
+		for snapshot in sorted {
+			switch snapshot.kind {
+			case let .text(text, style):
+				let attributed = style == .code ? NSAttributedString(string: text) : parseInlineMarkdown(text)
+				result.append(Block(id: snapshot.id, content: .text(TextBlock(text: attributed, style: style)), parentId: nil, children: []))
+			case let .image(reference, displayStyle, caption):
+				let item = MediaItem(id: snapshot.id, reference: reference, caption: caption)
+				if var last = result.last, case .media(var media) = last.content, media.kind == .image {
+					media.items.append(item)
+					last.content = .media(media)
+					result[result.count - 1] = last
+				} else {
+					result.append(Block(id: snapshot.id, content: .media(MediaBlock(kind: .image, items: [item], displayStyle: displayStyle)), parentId: nil, children: []))
+				}
+			case let .video(reference, displayStyle):
+				result.append(Block(id: snapshot.id, content: .media(MediaBlock(kind: .video, reference: reference, displayStyle: displayStyle, itemId: snapshot.id)), parentId: nil, children: []))
+			}
+		}
+		return result
+	}
+
+	/// The rows a block saves as: one per text or video block, one per photo of a
+	/// carousel. `position` runs across the whole note.
+	private func snapshots(for block: Block, position: inout Int) -> [EditorBlockSnapshot] {
+		switch block.content {
+		case let .text(textBlock):
+			let kind = EditorBlockKind.text(
+				text: serializeInlineMarkdown(from: textBlock.text, style: textBlock.style),
+				style: textBlock.style
+			)
+			defer { position += 1 }
+			return [EditorBlockSnapshot(id: block.id, kind: kind, parentId: nil, position: position)]
+		case let .media(media):
+			switch media.kind {
+			case .image:
+				return media.items.enumerated().map { index, item in
+					defer { position += 1 }
+					return EditorBlockSnapshot(
+						id: index == 0 ? block.id : item.id,
+						kind: .image(reference: item.reference, displayStyle: media.displayStyle, caption: item.caption),
+						parentId: nil,
+						position: position
+					)
+				}
+			case .video:
+				defer { position += 1 }
+				return [EditorBlockSnapshot(id: block.id, kind: .video(reference: media.reference, displayStyle: media.displayStyle), parentId: nil, position: position)]
+			}
 		}
 	}
 
@@ -803,51 +860,45 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			if a.section != b.section { return a.section < b.section }
 			return a.row < b.row
 		}
-		return sorted.compactMap { indexPath in
-			guard indexPath.row >= 0, indexPath.row < document.order.count else { return nil }
+		var position = 0
+		return sorted.flatMap { indexPath -> [EditorBlockSnapshot] in
+			guard indexPath.row >= 0, indexPath.row < document.order.count else { return [] }
 			let blockId = document.order[indexPath.row]
-			guard let block = document.block(id: blockId) else { return nil }
-
-			let kind: EditorBlockKind = {
-				switch block.content {
-				case let .text(textBlock):
-					return .text(
-						text: serializeInlineMarkdown(from: textBlock.text, style: textBlock.style),
-						style: textBlock.style
-					)
-				case let .media(media):
-					switch media.kind {
-					case .image:
-						return .image(reference: media.reference, displayStyle: media.displayStyle)
-					case .video:
-						return .video(reference: media.reference, displayStyle: media.displayStyle)
-					}
-				}
-			}()
-
-			return EditorBlockSnapshot(
-				id: block.id,
-				kind: kind,
-				parentId: nil,
-				position: indexPath.row
-			)
+			guard let block = document.block(id: blockId) else { return [] }
+			return snapshots(for: block, position: &position)
 		}
 	}
 
-	func copySelectedBlocksToPasteboard() {
+	func copySelectedBlocksToPasteboard(format: EditorCopyFormat = .formatted) {
 		let snapshots = selectedBlockSnapshots()
 		guard !snapshots.isEmpty else { return }
-		writeSnapshotsToPasteboard(snapshots)
+		writeSnapshotsToPasteboard(snapshots, format: format)
 	}
 
-	/// Write BOTH a structured (lossless) block representation and a plain markdown
-	/// string. Internal paste uses the structured form to rebuild blocks exactly
-	/// (checkbox state, inline bold/italic/strike); external apps get the markdown.
-	private func writeSnapshotsToPasteboard(_ snapshots: [EditorBlockSnapshot]) {
-		let markdown = makeMarkdown(from: snapshots)
-		var item: [String: Any] = [EditorClipboard.plainText: markdown]
+	/// Always writes the structured (lossless) block representation, which internal
+	/// paste uses to rebuild blocks exactly (checkbox state, inline bold/italic/strike).
+	/// What external apps see depends on the format: rich text (RTF + HTML + a plain
+	/// string with no markup) or the markdown source as plain text.
+	private func writeSnapshotsToPasteboard(_ snapshots: [EditorBlockSnapshot], format: EditorCopyFormat) {
+		var blocksPayload: [String: Any] = [:]
 		if let data = try? JSONEncoder().encode(snapshots) {
-			item[EditorClipboard.blocksType] = data
+			blocksPayload[EditorClipboard.blocksType] = data
+		}
+		let item: [String: Any]
+		switch format {
+		case .markdown:
+			var markdownItem = blocksPayload
+			markdownItem[EditorClipboard.plainText] = makeMarkdown(from: snapshots)
+			item = markdownItem
+		case .formatted:
+			let paragraphs = snapshots
+				.sorted { a, b in a.position != b.position ? a.position < b.position : a.id < b.id }
+				.compactMap { snapshot -> ClipboardExport.Paragraph? in
+					guard case let .text(text, style) = snapshot.kind else { return nil }
+					let attributed = style == .code ? NSAttributedString(string: text) : parseInlineMarkdown(text)
+					return ClipboardExport.Paragraph(style: style, text: attributed)
+				}
+			item = ClipboardExport.richContent(paragraphs: paragraphs).pasteboardItem(extra: blocksPayload)
 		}
 		UIPasteboard.general.setItems([item], options: [:])
 	}
@@ -859,36 +910,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     
     func setBlocks(_ snapshots: [EditorBlockSnapshot]) {
         blockUndoManager.removeAllActions()
-        let sorted = snapshots.sorted { a, b in
-            if a.position != b.position { return a.position < b.position }
-            return a.id < b.id
-        }
-        let blocks = sorted.map { s in
-			switch s.kind {
-			case let .text(text, style):
-				let attributed = style == .code ? NSAttributedString(string: text) : parseInlineMarkdown(text)
-				return Block(
-					id: s.id,
-					content: .text(TextBlock(text: attributed, style: style)),
-					parentId: nil,
-					children: []
-				)
-			case let .image(reference, displayStyle):
-				return Block(
-					id: s.id,
-					content: .media(MediaBlock(kind: .image, reference: reference, displayStyle: displayStyle)),
-					parentId: nil,
-					children: []
-				)
-			case let .video(reference, displayStyle):
-				return Block(
-					id: s.id,
-					content: .media(MediaBlock(kind: .video, reference: reference, displayStyle: displayStyle)),
-					parentId: nil,
-					children: []
-				)
-			}
-        }
+        let blocks = self.blocks(fromSnapshots: snapshots)
         let orderIds = blocks.map { $0.id }
         document.replaceAll(blocks: blocks, order: orderIds)
         // Notes whose last block is media (dropped image, share extension) get a
@@ -925,30 +947,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     }
 
     func snapshotBlocks() -> [EditorBlockSnapshot] {
-        document.order.enumerated().compactMap { index, blockId in
-            guard let block = document.block(id: blockId) else { return nil }
-			let kind: EditorBlockKind = {
-				switch block.content {
-				case let .text(textBlock):
-					return .text(
-						text: serializeInlineMarkdown(from: textBlock.text, style: textBlock.style),
-						style: textBlock.style
-					)
-				case let .media(media):
-					switch media.kind {
-					case .image:
-						return .image(reference: media.reference, displayStyle: media.displayStyle)
-					case .video:
-						return .video(reference: media.reference, displayStyle: media.displayStyle)
-					}
-				}
-			}()
-			return EditorBlockSnapshot(
-				id: block.id,
-				kind: kind,
-				parentId: nil,
-				position: index
-			)
+        var position = 0
+        return document.order.flatMap { blockId -> [EditorBlockSnapshot] in
+            guard let block = document.block(id: blockId) else { return [] }
+            return snapshots(for: block, position: &position)
         }
     }
 
@@ -1007,10 +1009,11 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 				default:
 					parts.append(trimmed)
 				}
-			case let .image(reference, _):
+			case let .image(reference, _, caption):
 				let ref = reference.trimmingCharacters(in: .whitespacesAndNewlines)
 				guard !ref.isEmpty else { continue }
-				parts.append("![](\(ref))")
+				let alt = caption.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "]", with: "\\]")
+				parts.append("![\(alt)](\(ref))")
 			case let .video(reference, _):
 				let ref = reference.trimmingCharacters(in: .whitespacesAndNewlines)
 				guard !ref.isEmpty else { continue }
@@ -1707,7 +1710,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		case let .media(media):
 			let cell = tableView.dequeueReusableCell(withIdentifier: MediaBlockCell.reuseId, for: indexPath)
 			guard let mediaCell = cell as? MediaBlockCell else { return cell }
-			mediaCell.configure(blockId: blockId, kind: media.kind, reference: media.reference, displayStyle: media.displayStyle)
+			mediaCell.configure(blockId: blockId, kind: media.kind, items: media.items, displayStyle: media.displayStyle)
 			mediaCell.delegate = self
 			mediaCell.isSelectionMode = isSelectionMode
 			return mediaCell
@@ -1804,6 +1807,10 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 
 	func blockCellRequestsDocumentRedo(_ cell: BlockCell) {
 		performDocumentRedo()
+	}
+
+	func blockCell(_ cell: BlockCell, markdownFor text: NSAttributedString) -> String {
+		serializeInlineMarkdown(from: text, style: cell.blockStyle)
 	}
 
 	func blockCell(_ cell: BlockCell, didPasteBlocks snapshots: [EditorBlockSnapshot]) {
@@ -1989,20 +1996,94 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		scheduleBlocksChanged()
 	}
 
-	func mediaBlockCellDidTapMedia(_ cell: MediaBlockCell) {
+	func mediaBlockCell(_ cell: MediaBlockCell, didTapMediaAt itemIndex: Int) {
 		guard isSelectionMode == false else { return }
 		guard let block = document.block(id: cell.blockId) else { return }
 		guard case .media(let media) = block.content else { return }
+		guard itemIndex >= 0, itemIndex < media.items.count else { return }
 		switch media.kind {
 		case .image:
-			presentFullScreenImage(reference: media.reference)
+			// The whole carousel opens, starting on the tapped photo, captions as plain text.
+			let items = media.items.map {
+				FullScreenGalleryItem(reference: $0.reference, caption: parseInlineMarkdown($0.caption).string)
+			}
+			presentFullScreenGallery(items: items, index: itemIndex)
 		case .video:
-			presentFullScreenVideo(reference: media.reference)
+			presentFullScreenVideo(reference: media.items[itemIndex].reference)
 		}
 	}
 
-	private func presentFullScreenImage(reference: String) {
-		pendingFullScreenImageReference = reference
+	func mediaBlockCell(_ cell: MediaBlockCell, didChangeCaption caption: String, forItemId itemId: String) {
+		guard var block = document.block(id: cell.blockId) else { return }
+		guard case .media(var media) = block.content else { return }
+		guard let index = media.items.firstIndex(where: { $0.id == itemId }) else { return }
+		guard media.items[index].caption != caption else { return }
+		media.items[index].caption = caption
+		block.content = .media(media)
+		document.setBlock(block)
+		scheduleBlocksChanged()
+	}
+
+	func mediaBlockCellDidChangeHeight(_ cell: MediaBlockCell) {
+		UIView.performWithoutAnimation {
+			tableView.beginUpdates()
+			tableView.endUpdates()
+		}
+	}
+
+	func mediaBlockCellDidRequestAddPhotos(_ cell: MediaBlockCell) {
+		guard isSelectionMode == false else { return }
+		guard document.block(id: cell.blockId) != nil else { return }
+		pendingMediaAppendToBlockId = cell.blockId
+		presentMediaPicker(insertAfterBlockId: cell.blockId, imagesOnly: true)
+	}
+
+	/// Removing the last photo removes the block itself; the note never ends up empty.
+	func mediaBlockCell(_ cell: MediaBlockCell, didRemoveItemId itemId: String) {
+		guard var block = document.block(id: cell.blockId) else { return }
+		guard case .media(var media) = block.content, media.kind == .image else { return }
+		guard let index = media.items.firstIndex(where: { $0.id == itemId }) else { return }
+		registerStructuralUndo(actionName: "Remove Photo")
+		if media.items.count == 1 {
+			document.remove(blockId: block.id)
+			if document.order.isEmpty {
+				let initial = Block(content: .text(TextBlock(text: NSAttributedString(string: ""), style: initialEmptyStyle)))
+				document.setBlock(initial)
+				pendingFocusBlockId = initial.id
+			}
+			tableView.reloadData()
+			scheduleBlocksChanged(immediate: true)
+			return
+		}
+		media.items.remove(at: index)
+		block.content = .media(media)
+		document.setBlock(block)
+		if let row = document.order.firstIndex(of: block.id) {
+			tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .fade)
+		} else {
+			tableView.reloadData()
+		}
+		scheduleBlocksChanged(immediate: true)
+	}
+
+	/// Photos appended to an existing carousel: the block picked from its own menu.
+	private func appendPhotos(_ references: [String], toBlockId blockId: String) {
+		guard !references.isEmpty, var block = document.block(id: blockId) else { return }
+		guard case .media(var media) = block.content, media.kind == .image else { return }
+		registerStructuralUndo(actionName: "Add Photos")
+		media.items.append(contentsOf: references.map { MediaItem(id: UUID().uuidString, reference: $0, caption: "") })
+		block.content = .media(media)
+		document.setBlock(block)
+		if let row = document.order.firstIndex(of: blockId) {
+			tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+		} else {
+			tableView.reloadData()
+		}
+		scheduleBlocksChanged(immediate: true)
+	}
+
+	private func presentFullScreenGallery(items: [FullScreenGalleryItem], index: Int) {
+		pendingFullScreenGallery = (items, index)
 		pendingFullScreenImageAttempts = 0
 		forceDismissKeyboard()
 		attemptPresentPendingFullScreenImage()
@@ -2033,20 +2114,20 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 	}
 
 	private func attemptPresentPendingFullScreenImage() {
-		guard let reference = pendingFullScreenImageReference else { return }
+		guard let pending = pendingFullScreenGallery else { return }
 		let root: UIView? = view.window ?? view
 		if let root, findFirstResponder(in: root) == nil {
-			pendingFullScreenImageReference = nil
+			pendingFullScreenGallery = nil
 			pendingFullScreenImageAttempts = 0
-			presentFullScreenImageNow(reference: reference)
+			presentFullScreenGalleryNow(items: pending.items, index: pending.index)
 			return
 		}
 
 		pendingFullScreenImageAttempts += 1
 		if pendingFullScreenImageAttempts >= 12 {
-			pendingFullScreenImageReference = nil
+			pendingFullScreenGallery = nil
 			pendingFullScreenImageAttempts = 0
-			presentFullScreenImageNow(reference: reference)
+			presentFullScreenGalleryNow(items: pending.items, index: pending.index)
 			return
 		}
 
@@ -2078,14 +2159,13 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		}
 	}
 
-	private func presentFullScreenImageNow(reference: String) {
-		let viewer = FullScreenImageViewController()
+	private func presentFullScreenGalleryNow(items: [FullScreenGalleryItem], index: Int) {
+		let viewer = FullScreenGalleryViewController(items: items, startIndex: index) { [weak self] reference, completion in
+			guard let self else { completion(nil); return }
+			self.loadImage(reference: reference, completion: completion)
+		}
 		viewer.modalPresentationStyle = .fullScreen
 		present(viewer, animated: true)
-
-		loadImage(reference: reference) { image in
-			viewer.setImage(image)
-		}
 	}
 
 	private func presentFullScreenVideoNow(reference: String) {
@@ -2175,74 +2255,115 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		completion(nil)
 	}
 
-	private func presentMediaPicker(insertAfterBlockId: String) {
+	private func presentMediaPicker(insertAfterBlockId: String, imagesOnly: Bool = false) {
 		pendingMediaInsertAfterBlockId = insertAfterBlockId
 		var configuration = PHPickerConfiguration(photoLibrary: .shared())
-		configuration.selectionLimit = 1
-		configuration.filter = .any(of: [.images, .videos])
+		// Several photos at once: they land as one carousel block.
+		configuration.selectionLimit = 0
+		configuration.selection = .ordered
+		configuration.filter = imagesOnly ? .images : .any(of: [.images, .videos])
 		let picker = PHPickerViewController(configuration: configuration)
 		picker.delegate = self
 		present(picker, animated: true)
 	}
 
+	private enum PickedMedia {
+		case image(String)
+		case video(String)
+	}
+
 	func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
 		dismiss(animated: true)
-		guard let result = results.first else {
+		let appendTo = pendingMediaAppendToBlockId
+		pendingMediaAppendToBlockId = nil
+		guard !results.isEmpty, let afterId = pendingMediaInsertAfterBlockId else {
 			pendingMediaInsertAfterBlockId = nil
 			return
 		}
-		guard let afterId = pendingMediaInsertAfterBlockId else { return }
 		pendingMediaInsertAfterBlockId = nil
 
-		let provider = result.itemProvider
-		let isVideo = provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier)
-		let assetIdentifier = result.assetIdentifier
+		// Every result loads on its own; the slots keep the order the person picked.
+		var picked = [PickedMedia?](repeating: nil, count: results.count)
+		let lock = NSLock()
+		let group = DispatchGroup()
+		for (index, result) in results.enumerated() {
+			group.enter()
+			loadPickedMedia(result) { media in
+				lock.lock(); picked[index] = media; lock.unlock()
+				group.leave()
+			}
+		}
+		group.notify(queue: .main) { [weak self] in
+			guard let self else { return }
+			let loaded = picked.compactMap { $0 }
+			if let appendTo {
+				let references = loaded.compactMap { media -> String? in
+					if case let .image(reference) = media { return reference }
+					return nil
+				}
+				self.appendPhotos(references, toBlockId: appendTo)
+				return
+			}
+			self.insertPickedMedia(loaded, afterBlockId: afterId)
+		}
+	}
 
-		if isVideo {
+	private func loadPickedMedia(_ result: PHPickerResult, completion: @escaping (PickedMedia?) -> Void) {
+		let provider = result.itemProvider
+		let assetIdentifier = result.assetIdentifier
+		if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
 			provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { [weak self] url, _ in
-				guard let self else { return }
+				guard let self else { completion(nil); return }
 				if let url {
-					let persisted = self.persistPickedFile(sourceUrl: url, defaultExtension: "mov")
-					DispatchQueue.main.async {
-						self.insertMediaBlock(kind: .video, reference: persisted, afterBlockId: afterId)
-					}
+					completion(.video(self.persistPickedFile(sourceUrl: url, defaultExtension: "mov")))
 					return
 				}
-				guard let assetIdentifier else { return }
+				guard let assetIdentifier else { completion(nil); return }
 				self.persistVideoAsset(localIdentifier: assetIdentifier) { persisted in
-					guard let persisted else { return }
-					DispatchQueue.main.async {
-						self.insertMediaBlock(kind: .video, reference: persisted, afterBlockId: afterId)
-					}
+					completion(persisted.map { .video($0) })
 				}
 			}
 			return
 		}
-
 		provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { [weak self] data, _ in
-			guard let self else { return }
+			guard let self else { completion(nil); return }
 			if let data, let persisted = self.persistPickedImageData(data: data) {
-				DispatchQueue.main.async {
-					self.insertMediaBlock(kind: .image, reference: persisted, afterBlockId: afterId)
-				}
+				completion(.image(persisted))
 				return
 			}
-			guard let assetIdentifier else { return }
+			guard let assetIdentifier else { completion(nil); return }
 			self.persistImageAsset(localIdentifier: assetIdentifier) { persisted in
-				guard let persisted else { return }
-				DispatchQueue.main.async {
-					self.insertMediaBlock(kind: .image, reference: persisted, afterBlockId: afterId)
-				}
+				completion(persisted.map { .image($0) })
 			}
 		}
 	}
 
-	private func insertMediaBlock(kind: MediaBlockKind, reference: String, afterBlockId: String) {
+	/// Picked media become blocks after `afterBlockId`: a run of photos is one
+	/// carousel, each video its own block, and an empty text row closes the run.
+	private func insertPickedMedia(_ picked: [PickedMedia], afterBlockId: String) {
+		guard !picked.isEmpty else { return }
 		registerStructuralUndo(actionName: "Insert Media")
-		let media = Block(content: .media(MediaBlock(kind: kind, reference: reference, displayStyle: .medium)))
-		let mediaId = document.insert(media, after: afterBlockId)
+		var previousId = afterBlockId
+		var photos: [MediaItem] = []
+		func flushPhotos() {
+			guard !photos.isEmpty else { return }
+			let block = Block(content: .media(MediaBlock(kind: .image, items: photos, displayStyle: .medium)))
+			previousId = document.insert(block, after: previousId)
+			photos = []
+		}
+		for media in picked {
+			switch media {
+			case let .image(reference):
+				photos.append(MediaItem(id: UUID().uuidString, reference: reference, caption: ""))
+			case let .video(reference):
+				flushPhotos()
+				let block = Block(content: .media(MediaBlock(kind: .video, reference: reference, displayStyle: .medium)))
+				previousId = document.insert(block, after: previousId)
+			}
+		}
+		flushPhotos()
 		let trailingText = Block(content: .text(TextBlock(text: NSAttributedString(string: ""), style: .text)))
-		_ = document.insert(trailingText, after: mediaId)
+		_ = document.insert(trailingText, after: previousId)
 		pendingFocusBlockId = trailingText.id
 		tableView.reloadData()
 		scheduleBlocksChanged(immediate: true)
@@ -2713,121 +2834,6 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         true
     }
-}
-
-private final class FullScreenImageViewController: UIViewController {
-	private let imageView = UIImageView()
-	private let scrollView = UIScrollView()
-	private let contentView = UIView()
-	private var isDismissingInteractively = false
-	private let dismissDistance: CGFloat = 140
-	private let dismissVelocity: CGFloat = 900
-
-	override func viewWillAppear(_ animated: Bool) {
-		super.viewWillAppear(animated)
-		view.window?.endEditing(true)
-		view.endEditing(true)
-		UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-	}
-
-	override func viewDidLoad() {
-		super.viewDidLoad()
-
-		view.backgroundColor = .black
-
-		scrollView.translatesAutoresizingMaskIntoConstraints = false
-		scrollView.alwaysBounceVertical = false
-		scrollView.alwaysBounceHorizontal = false
-		scrollView.isScrollEnabled = false
-		view.addSubview(scrollView)
-		NSLayoutConstraint.activate([
-			scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-			scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-			scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-			scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-		])
-
-		contentView.translatesAutoresizingMaskIntoConstraints = false
-		scrollView.addSubview(contentView)
-		NSLayoutConstraint.activate([
-			contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-			contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-			contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-			contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-			contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-			contentView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
-		])
-
-		imageView.translatesAutoresizingMaskIntoConstraints = false
-		imageView.contentMode = .scaleAspectFit
-		imageView.backgroundColor = .black
-		contentView.addSubview(imageView)
-		NSLayoutConstraint.activate([
-			imageView.topAnchor.constraint(equalTo: contentView.topAnchor),
-			imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-			imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-			imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-		])
-
-		let tap = UITapGestureRecognizer(target: self, action: #selector(didTapToDismiss))
-		view.addGestureRecognizer(tap)
-
-		let pan = UIPanGestureRecognizer(target: self, action: #selector(didPanToDismiss(_:)))
-		view.addGestureRecognizer(pan)
-	}
-
-	func setImage(_ image: UIImage?) {
-		imageView.image = image
-	}
-
-	@objc
-	private func didTapToDismiss() {
-		dismiss(animated: true)
-	}
-
-	@objc
-	private func didPanToDismiss(_ recognizer: UIPanGestureRecognizer) {
-		let translation = recognizer.translation(in: view)
-		let y = max(translation.y, 0)
-		let progress = min(y / max(dismissDistance, 1), 1)
-		let scale = 1 - (progress * 0.06)
-
-		switch recognizer.state {
-		case .began:
-			isDismissingInteractively = true
-
-		case .changed:
-			guard isDismissingInteractively else { return }
-			contentView.transform = CGAffineTransform(translationX: 0, y: y).scaledBy(x: scale, y: scale)
-			view.backgroundColor = UIColor.black.withAlphaComponent(1 - progress)
-
-		case .ended, .cancelled:
-			guard isDismissingInteractively else { return }
-			isDismissingInteractively = false
-
-			let velocity = recognizer.velocity(in: view)
-			let shouldDismiss = y > dismissDistance || velocity.y > dismissVelocity
-
-			if shouldDismiss {
-				UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut]) { [weak self] in
-					guard let self else { return }
-					self.contentView.transform = CGAffineTransform(translationX: 0, y: self.view.bounds.height)
-					self.view.backgroundColor = UIColor.black.withAlphaComponent(0)
-				} completion: { [weak self] _ in
-					self?.dismiss(animated: false)
-				}
-			} else {
-				UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut]) { [weak self] in
-					guard let self else { return }
-					self.contentView.transform = .identity
-					self.view.backgroundColor = .black
-				}
-			}
-
-		default:
-			break
-		}
-	}
 }
 
 private extension UIFont {

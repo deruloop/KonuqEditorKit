@@ -12,8 +12,12 @@
 "editor.media.small" = "Pequena";
 "editor.media.medium" = "Média";
 "editor.media.large" = "Grande";
+"editor.media.caption.placeholder" = "Adicionar legenda…";
+"editor.media.add_photos" = "Adicionar fotos…";
+"editor.media.remove_photo" = "Remover foto";
 "editor.select_all" = "Selecionar tudo";
 "editor.copy" = "Copiar";
+"editor.copy_markdown" = "Copiar como Markdown";
 "editor.cut" = "Recortar";
 "editor.send" = "Enviar";
 "editor.link" = "Link";
