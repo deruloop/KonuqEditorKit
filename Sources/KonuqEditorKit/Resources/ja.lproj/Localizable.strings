@@ -25,3 +25,8 @@
 "editor.link.prompt.apply" = "追加";
 "editor.cancel" = "キャンセル";
 "editor.link.placeholder.text" = "テキスト";
+"editor.location.title" = "場所を追加";
+"editor.location.search" = "場所を検索";
+"editor.location.add" = "追加";
+"editor.location.color" = "カラー";
+"editor.color.custom" = "カスタムカラー";

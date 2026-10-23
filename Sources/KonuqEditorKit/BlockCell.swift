@@ -101,7 +101,7 @@ final class BlocksEditorTextView: UITextView {
 			super.copy(sender)
 			return
 		}
-		let selection = attributedText.attributedSubstring(from: selectedRange)
+		let selection = LocationChips.expanded(attributedText.attributedSubstring(from: selectedRange))
 		let content = ClipboardExport.richContent(inline: selection, style: cell.blockStyle)
 		UIPasteboard.general.setItems([content.pasteboardItem()], options: [:])
 	}
@@ -891,6 +891,9 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		// resets the text input session and duplicates what you are typing.
 		// Detection re-applies the marker itself when the character is part of a link.
 		typing.removeValue(forKey: .appInlineAutoLink)
+		// What is typed next to a location chip is ordinary text, never part of the chip.
+		typing.removeValue(forKey: .attachment)
+		typing.removeValue(forKey: .appInlineLocationLabel)
 		// Same for the checkbox prefix kern (see the checkbox branch above).
 		typing.removeValue(forKey: .kern)
 
@@ -1253,6 +1256,22 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		return manager.characterIndexForGlyph(at: glyphIndex)
 	}
     
+    /// Location chips are drawn with the colours of the current appearance; redraw them
+    /// when light and dark switch.
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
+        let length = textView.attributedText.length
+        guard length > 0 else { return }
+        var hasChip = false
+        textView.attributedText.enumerateAttribute(.appInlineLocationLabel, in: NSRange(location: 0, length: length), options: []) { value, _, stop in
+            if value != nil { hasChip = true; stop.pointee = true }
+        }
+        guard hasChip else { return }
+        textView.layoutManager.invalidateDisplay(forCharacterRange: NSRange(location: 0, length: length))
+        textView.setNeedsDisplay()
+    }
+
     private func updateSelectionAppearance() {
         if isSelectionMode && isSelected {
             cardView.layer.borderWidth = 2
@@ -2965,6 +2984,34 @@ private extension BlockCell {
 				updated.addAttribute(.appInlineNoteLinkId, value: id, range: replacementRange)
 			}
 			remapSelectionForReplacement(in: full, replacementLength: replacement.length)
+		}
+
+		// Location links become chips: one attachment character carrying the link and the
+		// `📍 name` label (the serializer writes `[label](url)` back from it). Skip a link
+		// the caret sits inside, so editing its text by hand stays possible.
+		var locationRanges: [(range: NSRange, url: URL)] = []
+		updated.enumerateAttribute(.appInlineLinkUrl, in: NSRange(location: 0, length: updated.length), options: []) { value, range, _ in
+			guard updated.attribute(.attachment, at: range.location, effectiveRange: nil) == nil else { return }
+			let urlString: String? = (value as? String) ?? (value as? URL)?.absoluteString
+			guard let urlString, let url = URL(string: urlString) else { return }
+			let label = (updated.string as NSString).substring(with: range)
+			guard EditorLocationLink.isLocation(label: label, url: url) else { return }
+			if isEditing, newSelection.location > range.location, newSelection.location < NSMaxRange(range) { return }
+			locationRanges.append((range, url))
+		}
+		for entry in locationRanges.reversed() {
+			guard let place = EditorLocationLink.place(from: entry.url) else { continue }
+			let label = (updated.string as NSString).substring(with: entry.range)
+			var attrs = updated.attributes(at: entry.range.location, effectiveRange: nil)
+			let font = (attrs[.font] as? UIFont) ?? textView.font ?? UIFont.preferredFont(forTextStyle: .body)
+			attrs[.attachment] = LocationChipAttachment(place: place, label: label, font: font)
+			attrs[.appInlineLocationLabel] = label
+			attrs[.link] = entry.url
+			attrs[.appInlineLinkUrl] = entry.url.absoluteString
+			attrs.removeValue(forKey: .underlineStyle)
+			attrs.removeValue(forKey: .underlineColor)
+			updated.replaceCharacters(in: entry.range, with: NSAttributedString(string: "\u{FFFC}", attributes: attrs))
+			remapSelectionForReplacement(in: entry.range, replacementLength: 1)
 		}
 
 		for detected in BlockCell.autoLinkMatches(in: updated.string) {

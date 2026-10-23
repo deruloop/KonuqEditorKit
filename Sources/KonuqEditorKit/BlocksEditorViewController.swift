@@ -1443,7 +1443,8 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			.map { $0.range(at: 0) }
 
         attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length), options: []) { attrs, range, _ in
-            let substring = attributed.attributedSubstring(from: range).string
+            // A location chip is one attachment character; its text is the `📍 name` label.
+            let substring = (attrs[.appInlineLocationLabel] as? String) ?? attributed.attributedSubstring(from: range).string
 			let intersectsMarkdownLink = markdownLinkRanges.contains(where: { NSIntersectionRange($0, range).length > 0 })
 
 			let linkURL: URL? = {

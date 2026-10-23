@@ -25,3 +25,8 @@
 "editor.link.prompt.apply" = "Toevoegen";
 "editor.cancel" = "Annuleer";
 "editor.link.placeholder.text" = "tekst";
+"editor.location.title" = "Locatie toevoegen";
+"editor.location.search" = "Zoek een plaats";
+"editor.location.add" = "Toevoegen";
+"editor.location.color" = "Kleur";
+"editor.color.custom" = "Eigen kleur";

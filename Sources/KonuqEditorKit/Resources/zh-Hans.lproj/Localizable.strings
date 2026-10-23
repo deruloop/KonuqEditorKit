@@ -25,3 +25,8 @@
 "editor.link.prompt.apply" = "添加";
 "editor.cancel" = "取消";
 "editor.link.placeholder.text" = "文本";
+"editor.location.title" = "添加位置";
+"editor.location.search" = "搜索地点";
+"editor.location.add" = "添加";
+"editor.location.color" = "颜色";
+"editor.color.custom" = "自定义颜色";
