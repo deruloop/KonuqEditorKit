@@ -60,8 +60,21 @@ final class LocationChipTests: XCTestCase {
 		// Saving writes back exactly the markdown that was loaded.
 		XCTAssertEqual(controller.blockCell(cell, markdownFor: shown), markdown)
 
-		// Copy sees the label, not the attachment character.
-		XCTAssertEqual(LocationChips.expanded(shown).string, "Start at 📍 Saiho-ji before the crowds")
+		// Copy sees the label, not the attachment character, and the label is a real link.
+		let expanded = LocationChips.expanded(shown)
+		XCTAssertEqual(expanded.string, "Start at 📍 Saiho-ji before the crowds")
+		XCTAssertNotNil(expanded.attribute(.link, at: 10, effectiveRange: nil))
+
+		// No `.link` on the chip, so the text view paints no link underline over it,
+		// yet a tap on it still finds the place's URL.
+		let chipAttrs = shown.attributes(at: 9, effectiveRange: nil)
+		XCTAssertNil(chipAttrs[.link])
+		XCTAssertEqual(BlockCell.tappableURL(in: chipAttrs).flatMap { EditorLocationLink.place(from: $0) }?.name, place.name)
+
+		// Loading the chip text again (a second normalisation pass) keeps it that way.
+		cell.configure(blockId: "b1", text: shown, style: .text, isFirstBlock: false)
+		XCTAssertEqual(cell.textView.attributedText.string, shown.string)
+		XCTAssertNil(cell.textView.attributedText.attribute(.link, at: 9, effectiveRange: nil))
 	}
 
 	func test_ordinaryLinksStayLinks() {

@@ -1141,13 +1141,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		guard index >= 0, index < textView.attributedText.length else { return }
 
 		let attrs = textView.attributedText.attributes(at: index, effectiveRange: nil)
-		if let urlValue = attrs[.link] {
-			let url: URL? = {
-				if let u = urlValue as? URL { return u }
-				if let s = urlValue as? String { return URL(string: s) }
-				return nil
-			}()
-			guard let url else { return }
+		if let url = BlockCell.tappableURL(in: attrs) {
 			delegate?.blockCell(self, didTapURL: url)
 			return
 		}
@@ -1229,14 +1223,18 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		guard index >= 0, index < textView.attributedText.length else { return false }
 
 		let attrs = textView.attributedText.attributes(at: index, effectiveRange: nil)
-		guard let urlValue = attrs[.link] else { return false }
+		return BlockCell.tappableURL(in: attrs) != nil
+	}
 
-		let url: URL? = {
-			if let u = urlValue as? URL { return u }
-			if let s = urlValue as? String { return URL(string: s) }
-			return nil
-		}()
-		return url != nil
+	/// The URL a tap at these attributes opens: the `.link` of an ordinary link, or the
+	/// stored URL of a location chip (which carries no `.link`, so the text view does not
+	/// paint link styling over it).
+	static func tappableURL(in attrs: [NSAttributedString.Key: Any]) -> URL? {
+		if let u = attrs[.link] as? URL { return u }
+		if let s = attrs[.link] as? String { return URL(string: s) }
+		guard attrs[.appInlineLocationLabel] != nil else { return nil }
+		if let s = attrs[.appInlineLinkUrl] as? String { return URL(string: s) }
+		return attrs[.appInlineLinkUrl] as? URL
 	}
 
 	override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -2934,6 +2932,10 @@ private extension BlockCell {
 				updated.addAttribute(.link, value: url, range: range)
 			}
 		}
+		// Location chips keep their URL in `.appInlineLinkUrl` only (see the chip pass below).
+		updated.enumerateAttribute(.appInlineLocationLabel, in: NSRange(location: 0, length: updated.length), options: []) { value, range, _ in
+			if value != nil { updated.removeAttribute(.link, range: range) }
+		}
 
 		if let baseFont = textView.font {
 			var missingFontRanges: [NSRange] = []
@@ -3006,8 +3008,11 @@ private extension BlockCell {
 			let font = (attrs[.font] as? UIFont) ?? textView.font ?? UIFont.preferredFont(forTextStyle: .body)
 			attrs[.attachment] = LocationChipAttachment(place: place, label: label, font: font)
 			attrs[.appInlineLocationLabel] = label
-			attrs[.link] = entry.url
 			attrs[.appInlineLinkUrl] = entry.url.absoluteString
+			// No `.link`: UITextView paints `linkTextAttributes` (accent colour, underline)
+			// over every `.link` range, which drew a line under the chip. The chip has its
+			// own design; taps reach it through `tappableURL(in:)` instead.
+			attrs.removeValue(forKey: .link)
 			attrs.removeValue(forKey: .underlineStyle)
 			attrs.removeValue(forKey: .underlineColor)
 			updated.replaceCharacters(in: entry.range, with: NSAttributedString(string: "\u{FFFC}", attributes: attrs))

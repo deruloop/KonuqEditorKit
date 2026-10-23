@@ -9,7 +9,8 @@ extension NSAttributedString.Key {
 
 /// A location drawn inline as one atomic character: a rounded, tinted pill holding the pin,
 /// the place name, its area and a small arrow. The caret cannot enter it, backspace removes
-/// it whole, and a tap goes through the ordinary link path (`.link` sits on the character).
+/// it whole, and a tap opens the URL stored in the link-URL attribute. The character carries no
+/// `.link`, so the text view never paints its link styling (an underline) over the chip.
 ///
 /// TextKit 1 renders attachments as images, so the pill is drawn on demand in
 /// `image(forBounds:…)` with the colours of the current appearance. The cell invalidates
@@ -154,6 +155,9 @@ final class LocationChipAttachment: NSTextAttachment {
 }
 
 enum LocationChips {
+	/// The cell's `.appInlineLinkUrl` key (file-private there): where a chip keeps its URL.
+	private static let linkUrlKey = NSAttributedString.Key("app.inline.link.url")
+
 	/// The chip text with every chip replaced by its `📍 name` label, keeping the link: what
 	/// copy, cut and any plain-text reader should see.
 	static func expanded(_ text: NSAttributedString) -> NSAttributedString {
@@ -167,6 +171,10 @@ enum LocationChips {
 			var attrs = out.attributes(at: range.location, effectiveRange: nil)
 			attrs.removeValue(forKey: .attachment)
 			attrs.removeValue(forKey: .appInlineLocationLabel)
+			// The chip itself carries no `.link`; the expanded label is an ordinary link.
+			if attrs[.link] == nil, let url = (attrs[linkUrlKey] as? String).flatMap(URL.init(string:)) {
+				attrs[.link] = url
+			}
 			out.replaceCharacters(in: range, with: NSAttributedString(string: label, attributes: attrs))
 		}
 		return out

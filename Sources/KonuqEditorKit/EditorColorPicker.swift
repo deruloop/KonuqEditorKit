@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// A compact colour picker: a row of swatches plus the system picker for anything else.
+/// A compact colour picker: a grid of swatches plus the system picker for anything else.
 /// Reusable by any host or editor feature that needs a tint (location chips today).
 /// The selection is six hex digits, the form colours are stored in.
 public struct EditorColorPicker: View {
@@ -45,34 +45,36 @@ public struct EditorColorPicker: View {
 		)
 	}
 
+	/// Swatches wrap onto as many rows as the width needs; the selection ring (4 pt outside
+	/// the 30 pt circle) fits inside each 38 pt cell.
+	private let columns = [GridItem(.adaptive(minimum: 38, maximum: 46), spacing: 10)]
+
 	public var body: some View {
-		ScrollView(.horizontal, showsIndicators: false) {
-			HStack(spacing: 10) {
-				ForEach(swatches, id: \.self) { hex in
-					let color = Color(uiColor: EditorLocationLink.color(fromHex: hex) ?? .gray)
-					Button {
-						selection = hex
-					} label: {
-						Circle()
-							.fill(color)
-							.frame(width: 30, height: 30)
-							.overlay(
-								Circle()
-									.strokeBorder(Color.primary.opacity(hex == normalizedSelection ? 0.85 : 0), lineWidth: 2.5)
-									.padding(-4)
-							)
-					}
-					.buttonStyle(.plain)
-					.accessibilityLabel(Text("#\(hex)"))
-					.accessibilityAddTraits(hex == normalizedSelection ? .isSelected : [])
+		LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+			ForEach(swatches, id: \.self) { hex in
+				let color = Color(uiColor: EditorLocationLink.color(fromHex: hex) ?? .gray)
+				Button {
+					selection = hex
+				} label: {
+					Circle()
+						.fill(color)
+						.frame(width: 30, height: 30)
+						.overlay(
+							Circle()
+								.strokeBorder(Color.primary.opacity(hex == normalizedSelection ? 0.85 : 0), lineWidth: 2.5)
+								.padding(-4)
+						)
+						.frame(width: 38, height: 38)
 				}
-				ColorPicker(L.t("editor.color.custom"), selection: customBinding, supportsOpacity: false)
-					.labelsHidden()
-					.frame(width: 30, height: 30)
-					.accessibilityLabel(Text(L.t("editor.color.custom")))
+				.buttonStyle(.plain)
+				.accessibilityLabel(Text("#\(hex)"))
+				.accessibilityAddTraits(hex == normalizedSelection ? .isSelected : [])
 			}
-			.padding(.horizontal, 6)
-			.padding(.vertical, 6)
+			ColorPicker(L.t("editor.color.custom"), selection: customBinding, supportsOpacity: false)
+				.labelsHidden()
+				.frame(width: 38, height: 38)
+				.accessibilityLabel(Text(L.t("editor.color.custom")))
 		}
+		.padding(.vertical, 4)
 	}
 }
