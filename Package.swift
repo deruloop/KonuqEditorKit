@@ -15,6 +15,11 @@ let package = Package(
 			resources: [
 				.process("Resources")
 			]
+		),
+		.testTarget(
+			name: "KonuqEditorKitTests",
+			dependencies: ["KonuqEditorKit"],
+			path: "Tests/KonuqEditorKitTests"
 		)
 	]
 )
