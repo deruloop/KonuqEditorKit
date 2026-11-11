@@ -683,6 +683,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
         updatePlaceholderVisibility()
 		updateDividerVisibility()
         updateKeyboardAccessoryState()
+		updateAutocapitalizationForTagContext()
         delegate?.blockCell(self, didChangeText: textView.attributedText)
     }
 
@@ -778,6 +779,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		if isApplyingInlineTagAttributes { return }
 		if isApplyingInlineLinkAttributes { return }
 		if isApplyingBaseTextAttributes { return }
+		updateAutocapitalizationForTagContext()
 		// Markdown links are left literal while the caret is inside them; the moment
 		// the caret moves out (a tap elsewhere, arrow keys) they must become links
 		// without waiting for the next keystroke.
@@ -2181,6 +2183,75 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 		}
 		storage.endEditing()
 	}
+
+	/// The text view's own autocapitalization, captured the first time a tag
+	/// switches it off so it can be restored when the caret leaves the tag.
+	private var autocapitalizationOutsideTags: UITextAutocapitalizationType?
+
+	/// Tags are typed in lowercase: "#" at the start of a sentence would otherwise
+	/// make the keyboard capitalize the tag's first letter. While the caret sits in
+	/// a tag being typed, autocapitalization is off; Shift still works for a tag
+	/// that really wants a capital.
+	private func updateAutocapitalizationForTagContext() {
+		let outside = autocapitalizationOutsideTags ?? textView.autocapitalizationType
+		let wanted: UITextAutocapitalizationType = isCaretInTag() ? .none : outside
+		guard textView.autocapitalizationType != wanted else { return }
+		if autocapitalizationOutsideTags == nil {
+			autocapitalizationOutsideTags = textView.autocapitalizationType
+		}
+		textView.autocapitalizationType = wanted
+		// Traits are read when the keyboard attaches; reloading applies the change
+		// to the keyboard already on screen. Deferred past the current edit: a
+		// reload inside the delegate callback leaves Shift as the keyboard had
+		// already computed it, so "#" from the accessory bar still capitalized.
+		DispatchQueue.main.async { [weak self] in
+			guard let self, self.textView.isFirstResponder else { return }
+			self.textView.reloadInputViews()
+			// The keyboard only recomputes Shift when told the text or selection
+			// moved; without this nudge it keeps the capital it had chosen.
+			self.textView.inputDelegate?.selectionWillChange(self.textView)
+			self.textView.inputDelegate?.selectionDidChange(self.textView)
+		}
+	}
+
+	/// True when the caret (no selection) follows "#" plus zero or more tag
+	/// characters, with the "#" not glued to a preceding word. Matches the same
+	/// tags as `tagRegex`, plus the bare "#" just typed.
+	private func isCaretInTag() -> Bool {
+		guard style != .code else { return false }
+		let selection = textView.selectedRange
+		guard selection.length == 0 else { return false }
+		let ns = textView.attributedText.string as NSString
+		var index = min(selection.location, ns.length)
+		while index > 0 {
+			let range = ns.rangeOfComposedCharacterSequence(at: index - 1)
+			let character = ns.substring(with: range)
+			if character == "#" {
+				guard range.location > 0 else { return true }
+				let previous = ns.substring(with: ns.rangeOfComposedCharacterSequence(at: range.location - 1))
+				return !BlockCell.isTagWordCharacter(previous)
+			}
+			guard BlockCell.isTagBodyCharacter(character) else { return false }
+			index = range.location
+		}
+		return false
+	}
+
+	private static func isTagWordCharacter(_ character: String) -> Bool {
+		character.unicodeScalars.contains { scalar in
+			scalar == "_" || CharacterSet.letters.contains(scalar) || CharacterSet.decimalDigits.contains(scalar)
+		}
+	}
+
+	private static func isTagBodyCharacter(_ character: String) -> Bool {
+		let range = NSRange(location: 0, length: (character as NSString).length)
+		return tagBodyCharacterRegex.firstMatch(in: character, options: [], range: range) != nil
+	}
+
+	private static let tagBodyCharacterRegex = try! NSRegularExpression(
+		pattern: "^[\\p{L}\\p{N}_\\-\\p{So}\\p{Sk}\\p{Mn}\\p{Mc}\\p{Cf}]+$",
+		options: []
+	)
 
 	private func applyInlineTagAttributesIfNeeded(preservingSelection selection: NSRange) {
 		guard style != .code else { return }
