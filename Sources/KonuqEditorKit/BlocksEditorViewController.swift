@@ -912,6 +912,12 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
         blockUndoManager.removeAllActions()
         let blocks = self.blocks(fromSnapshots: snapshots)
         let orderIds = blocks.map { $0.id }
+        // The host reloads the note it already shows when its view comes back (after
+        // a full-screen cover, or a pop from a linked note). That is a refresh of the
+        // same document, so it must leave the keyboard as it is: only a document
+        // with no block in common with the current one counts as opening a note.
+        let isReloadOfCurrentDocument = Set(document.order).isDisjoint(with: orderIds) == false
+        let shouldFocus = autoFocusOnAppear && isReloadOfCurrentDocument == false
         document.replaceAll(blocks: blocks, order: orderIds)
         // Notes whose last block is media (dropped image, share extension) get a
         // trailing text row so there is always somewhere to write.
@@ -919,7 +925,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
             scheduleBlocksChanged(immediate: true)
         }
 
-		if autoFocusOnAppear {
+		if shouldFocus {
 			if document.order.isEmpty {
 				let initial = Block(content: .text(TextBlock(text: NSAttributedString(string: ""), style: initialEmptyStyle)))
 				document.setBlock(initial)
@@ -941,7 +947,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 
         tableView.reloadData()
 		scheduleBlocksChanged(immediate: true)
-		if autoFocusOnAppear {
+		if shouldFocus {
 			focusIfNeeded()
 		}
     }
@@ -2165,7 +2171,11 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			guard let self else { completion(nil); return }
 			self.loadImage(reference: reference, completion: completion)
 		}
-		viewer.modalPresentationStyle = .fullScreen
+		// Over the editor rather than replacing it: the note stays in the hierarchy,
+		// so closing the gallery does not make the host view appear again and reload
+		// the note (which used to bring the keyboard back).
+		viewer.modalPresentationStyle = .overFullScreen
+		viewer.modalPresentationCapturesStatusBarAppearance = true
 		present(viewer, animated: true)
 	}
 

@@ -466,6 +466,23 @@ final class MediaBlockCell: UITableViewCell, BlockSelectableCell, UIScrollViewDe
 
 	// MARK: Captions
 
+	/// A caption is one run of text and its Return key reads "Done": it closes the
+	/// keyboard instead of adding a line.
+	func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+		guard text == "\n" else { return true }
+		textView.resignFirstResponder()
+		return false
+	}
+
+	/// Swiping to another photo leaves the caption being written off screen, so the
+	/// keyboard goes with it.
+	func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+		guard scrollView === pager else { return }
+		for page in pages where page.caption.isFirstResponder {
+			page.caption.resignFirstResponder()
+		}
+	}
+
 	func textViewDidChange(_ textView: UITextView) {
 		let index = textView.tag
 		guard index >= 0, index < items.count, index < pages.count else { return }
@@ -563,6 +580,12 @@ private final class MediaPage: UIView {
 		caption.textContainerInset = UIEdgeInsets(top: 6, left: 8, bottom: 4, right: 8)
 		caption.textContainer.lineFragmentPadding = 0
 		caption.returnKeyType = .done
+		if isMacRuntimeHost() == false {
+			// The bar the text rows have above the keyboard, reduced to its Done button.
+			caption.inputAccessoryView = KeyboardActionAccessoryView(onDone: { [weak self] in
+				self?.caption.resignFirstResponder()
+			})
+		}
 		addSubview(caption)
 
 		placeholder.translatesAutoresizingMaskIntoConstraints = false

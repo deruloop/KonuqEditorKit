@@ -2323,7 +2323,7 @@ final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, 
 	}
 }
 
-private final class KeyboardActionAccessoryView: UIInputView {
+final class KeyboardActionAccessoryView: UIInputView {
 	private let onMedia: () -> Void
 	private let onPaste: () -> Void
     private let onHash: () -> Void
@@ -2519,6 +2519,17 @@ private final class KeyboardActionAccessoryView: UIInputView {
     required init?(coder: NSCoder) {
         fatalError()
     }
+
+	/// The same bar with only its Done button, for fields that take no formatting
+	/// (photo captions).
+	convenience init(onDone: @escaping () -> Void) {
+		self.init(
+			onMedia: {}, onPaste: {}, onHash: {}, onBold: {}, onItalic: {}, onLink: {},
+			onCodeBlock: {}, onCheckbox: {}, onDivider: {}, onTrailingAction: {}, onLocation: {},
+			onDone: onDone
+		)
+		scrollView.isHidden = true
+	}
 
     override var intrinsicContentSize: CGSize {
         CGSize(width: UIView.noIntrinsicMetric, height: 50)
