@@ -254,6 +254,7 @@ protocol BlockCellDelegate: AnyObject {
 
 protocol BlockSelectableCell: AnyObject {
 	var isSelectionMode: Bool { get set }
+	var blockId: String { get }
 }
 
 final class BlockCell: UITableViewCell, UITextViewDelegate, UITextDropDelegate, BlockSelectableCell {

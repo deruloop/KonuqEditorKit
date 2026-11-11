@@ -26,6 +26,8 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     private lazy var keyboardHandler = KeyboardActionHandler(document: document, service: service, toggleStorage: toggleStorage)
     
     private var pendingFocusBlockId: String?
+	/// Last height each row was laid out at, by block id (see estimatedHeightForRowAt).
+	private var measuredRowHeights: [String: CGFloat] = [:]
     /// Caret placement used when pendingFocusBlockId is focused. Enter/split sets
     /// .start so the caret sits before the carried text; everything else keeps .end.
     private var pendingFocusCursor: FocusCursorPlacement = .end
@@ -1586,7 +1588,9 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 			return
 		}
 		let indexPath = IndexPath(row: row, section: 0)
-		tableView.scrollToRow(at: indexPath, at: .middle, animated: false)
+		// Only as far as it takes to show the row: centring it made the text jump
+		// on every Return near the edge of the screen.
+		tableView.scrollToRow(at: indexPath, at: .none, animated: false)
 		tableView.layoutIfNeeded()
 
 		if focusVisibleTextCell(blockId: id, cursor: cursor) {
@@ -1724,7 +1728,28 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 		}
     }
 
+	/// Rows off screen are sized from this instead of one flat guess. A photo row is
+	/// several times taller than a line of text, and with a flat estimate every
+	/// insert, delete or height update moved the scroll position by the difference.
+	func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+		guard indexPath.row >= 0, indexPath.row < document.order.count else { return 44 }
+		let blockId = document.order[indexPath.row]
+		if let measured = measuredRowHeights[blockId] { return measured }
+		guard let block = document.block(id: blockId), case .media(let media) = block.content else { return 44 }
+		return MediaBlockCell.estimatedHeight(displayStyle: media.displayStyle, itemCount: media.items.count)
+	}
+
+	func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+		rememberHeight(of: cell)
+	}
+
+	private func rememberHeight(of cell: UITableViewCell) {
+		guard cell.bounds.height > 0, let blockId = (cell as? BlockSelectableCell)?.blockId, blockId.isEmpty == false else { return }
+		measuredRowHeights[blockId] = cell.bounds.height
+	}
+
 	func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+		rememberHeight(of: cell)
 		guard isSelectionMode == false else { return }
 		guard let targetId = pendingFocusBlockId else { return }
 		guard indexPath.row >= 0, indexPath.row < document.order.count else { return }
@@ -1765,8 +1790,15 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
     
     func blockCell(_ cell: BlockCell, didChangeText text: NSAttributedString) {
         document.updateText(blockId: cell.blockId, text: text)
-        tableView.beginUpdates()
-        tableView.endUpdates()
+		// The table only has to re-measure when the text wraps onto another line or
+		// loses one, not on every character.
+		let textView = cell.textView
+		let fitting = textView.sizeThatFits(CGSize(width: textView.bounds.width, height: .greatestFiniteMagnitude)).height
+		if abs(fitting - textView.bounds.height) > 0.5 {
+			tableView.beginUpdates()
+			tableView.endUpdates()
+			rememberHeight(of: cell)
+		}
 		scheduleBlocksChanged()
 		// When this fires on the dictation target while we are NOT programmatically
 		// applying a recognition result, the user edited by hand: re-baseline the
@@ -1858,7 +1890,7 @@ final class BlocksEditorViewController: UIViewController, UITableViewDataSource,
 
 			let cursor: FocusCursorPlacement = (direction == .up) ? .end : .start
 			let indexPath = IndexPath(row: idx, section: 0)
-			tableView.scrollToRow(at: indexPath, at: .middle, animated: false)
+			tableView.scrollToRow(at: indexPath, at: .none, animated: false)
 			tableView.layoutIfNeeded()
 			_ = focusVisibleTextCell(blockId: targetId, cursor: cursor)
 			return

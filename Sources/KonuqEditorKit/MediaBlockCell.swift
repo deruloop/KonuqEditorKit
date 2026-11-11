@@ -1,4 +1,5 @@
 import UIKit
+import ImageIO
 import Photos
 import AVFoundation
 
@@ -363,8 +364,49 @@ final class MediaBlockCell: UITableViewCell, BlockSelectableCell, UIScrollViewDe
 
 	// MARK: Loading
 
+	/// Row height before the cell has ever been laid out: the photo, one caption
+	/// line, the page dots and the card's margins.
+	static func estimatedHeight(displayStyle: MediaBlockDisplayStyle, itemCount: Int) -> CGFloat {
+		let imageHeight: CGFloat = {
+			switch displayStyle {
+			case .small: 140
+			case .medium: 220
+			case .large: 320
+			}
+		}()
+		return imageHeight + MediaPage.minimumCaptionHeight + (itemCount > 1 ? 16 : 0) + 2
+	}
+
+	/// Thumbnails already decoded at carousel size, by media reference. A row that
+	/// scrolls back in, or a table reload, shows its photos at once instead of
+	/// reading and decoding the full-size files again.
+	private static let thumbnailCache: NSCache<NSString, UIImage> = {
+		let cache = NSCache<NSString, UIImage>()
+		cache.countLimit = 120
+		return cache
+	}()
+	private static let thumbnailMaxPixelSize: CGFloat = 1200
+
+	private static func downsampledImage(at url: URL) -> UIImage? {
+		let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+		guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
+		let options = [
+			kCGImageSourceCreateThumbnailFromImageAlways: true,
+			kCGImageSourceCreateThumbnailWithTransform: true,
+			kCGImageSourceShouldCacheImmediately: true,
+			kCGImageSourceThumbnailMaxPixelSize: thumbnailMaxPixelSize
+		] as CFDictionary
+		guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+		return UIImage(cgImage: cgImage)
+	}
+
 	private func loadMedia(for item: MediaItem, into page: MediaPage) {
 		let reference = item.reference
+		let cacheKey = reference as NSString
+		if let cached = Self.thumbnailCache.object(forKey: cacheKey) {
+			page.image.image = cached
+			return
+		}
 		if reference.hasPrefix("phasset:") {
 			let id = String(reference.dropFirst("phasset:".count))
 			let assets = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
@@ -378,8 +420,12 @@ final class MediaBlockCell: UITableViewCell, BlockSelectableCell, UIScrollViewDe
 				targetSize: CGSize(width: 1200, height: 1200),
 				contentMode: .aspectFill,
 				options: options
-			) { [weak page] image, _ in
-				DispatchQueue.main.async { page?.image.image = image }
+			) { [weak page] image, info in
+				let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+				DispatchQueue.main.async {
+					if let image, isDegraded == false { Self.thumbnailCache.setObject(image, forKey: cacheKey) }
+					page?.image.image = image
+				}
 			}
 			imageRequestIds.append(requestId)
 			return
@@ -388,8 +434,11 @@ final class MediaBlockCell: UITableViewCell, BlockSelectableCell, UIScrollViewDe
 		guard let url = MediaReferenceResolver.localFileURL(from: reference) else { return }
 		if kind == .image {
 			DispatchQueue.global(qos: .userInitiated).async { [weak page] in
-				guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return }
-				DispatchQueue.main.async { page?.image.image = image }
+				guard let image = Self.downsampledImage(at: url) else { return }
+				DispatchQueue.main.async {
+					Self.thumbnailCache.setObject(image, forKey: cacheKey)
+					page?.image.image = image
+				}
 			}
 			return
 		}
@@ -403,7 +452,10 @@ final class MediaBlockCell: UITableViewCell, BlockSelectableCell, UIScrollViewDe
 				guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }
 				return UIImage(cgImage: cgImage)
 			}()
-			DispatchQueue.main.async { page?.image.image = image ?? UIImage(systemName: "video") }
+			DispatchQueue.main.async {
+				if let image { Self.thumbnailCache.setObject(image, forKey: cacheKey) }
+				page?.image.image = image ?? UIImage(systemName: "video")
+			}
 		}
 	}
 
